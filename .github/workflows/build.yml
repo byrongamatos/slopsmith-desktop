@@ -61,8 +61,12 @@ jobs:
       - name: Install npm dependencies
         run: npm install
 
+      - name: Configure audio engine
+        run: npx cmake-js configure --runtime electron --runtime-version $(node -e "console.log(require('./node_modules/electron/package.json').version)") --arch ${{ matrix.arch }} -- -DCMAKE_BUILD_TYPE=Release
+        shell: bash
+
       - name: Build audio engine
-        run: npx cmake-js build --runtime electron --runtime-version $(node -e "console.log(require('./node_modules/electron/package.json').version)") --arch ${{ matrix.arch }} -- -DCMAKE_BUILD_TYPE=Release
+        run: cmake --build build --config Release -j$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo 2)
         shell: bash
 
       - name: Build TypeScript
