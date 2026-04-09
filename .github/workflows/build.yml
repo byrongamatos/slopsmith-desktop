@@ -38,35 +38,26 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Linux dependencies
+      # ── Platform dependencies ───────────────────────────────────────────
       - name: Install Linux dependencies
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libasound2-dev \
-            libjack-jackd2-dev \
-            libfreetype-dev \
-            libx11-dev \
-            libxrandr-dev \
-            libxcursor-dev \
-            libxinerama-dev \
-            libxext-dev \
-            libcurl4-openssl-dev \
-            libwebkit2gtk-4.1-dev \
-            pkg-config \
-            cmake
+            libasound2-dev libjack-jackd2-dev libfreetype-dev \
+            libx11-dev libxrandr-dev libxcursor-dev libxinerama-dev libxext-dev \
+            libcurl4-openssl-dev libwebkit2gtk-4.1-dev \
+            pkg-config cmake ffmpeg
 
-      # macOS — Xcode is pre-installed on runners
       - name: Install macOS dependencies
         if: matrix.platform == 'mac'
-        run: brew install cmake pkg-config
+        run: brew install cmake pkg-config ffmpeg
 
-      # Windows — install CMake
       - name: Install Windows dependencies
         if: matrix.platform == 'win'
-        run: choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+        run: choco install cmake ffmpeg --installargs 'ADD_CMAKE_TO_PATH=System'
 
+      # ── Build native addon ──────────────────────────────────────────────
       - name: Install npm dependencies
         run: npm install
 
@@ -77,6 +68,89 @@ jobs:
       - name: Build TypeScript
         run: npm run build:ts
 
+      # ── Bundle Slopsmith server + plugins ───────────────────────────────
+      - name: Clone Slopsmith
+        run: git clone --depth 1 https://github.com/byrongamatos/slopsmith.git /tmp/slopsmith
+
+      - name: Clone Slopsmith plugins
+        run: |
+          cd /tmp/slopsmith/plugins
+          for repo in 3dhighway cf discextract fretboard metronome midi notedetect practice profileimport rs1extract sectionmap setlist tabimport tabview tones ug; do
+            git clone --depth 1 https://github.com/byrongamatos/slopsmith-plugin-${repo}.git ${repo} 2>/dev/null || true
+          done
+        shell: bash
+
+      - name: Bundle Slopsmith into resources
+        run: |
+          mkdir -p resources/slopsmith/{static,lib,plugins}
+
+          # Server + lib
+          cp /tmp/slopsmith/server.py resources/slopsmith/
+          cp -r /tmp/slopsmith/lib/* resources/slopsmith/lib/
+          rm -rf resources/slopsmith/lib/__pycache__
+
+          # Static assets
+          cp /tmp/slopsmith/static/index.html resources/slopsmith/static/
+          cp /tmp/slopsmith/static/app.js resources/slopsmith/static/
+          cp /tmp/slopsmith/static/highway.js resources/slopsmith/static/
+          cp /tmp/slopsmith/static/style.css resources/slopsmith/static/
+
+          # Plugins
+          cp /tmp/slopsmith/plugins/__init__.py resources/slopsmith/plugins/
+          for d in /tmp/slopsmith/plugins/*/; do
+            name=$(basename "$d")
+            [ "$name" = "__pycache__" ] && continue
+            mkdir -p "resources/slopsmith/plugins/$name"
+            cp "$d"/*.py "$d"/*.js "$d"/*.html "$d"/*.json "resources/slopsmith/plugins/$name/" 2>/dev/null || true
+          done
+
+          # Desktop-specific plugins
+          for dp in src/renderer src/renderer/plugin-manager; do
+            if [ -f "$dp/plugin.json" ]; then
+              pname=$(python3 -c "import json; print(json.load(open('$dp/plugin.json'))['id'])")
+              mkdir -p "resources/slopsmith/plugins/$pname"
+              cp "$dp"/*.html "$dp"/*.js "$dp"/plugin.json "resources/slopsmith/plugins/$pname/" 2>/dev/null || true
+            fi
+          done
+        shell: bash
+
+      - name: Create Python venv
+        run: |
+          python3 -m venv resources/python
+          resources/python/bin/python -m pip install --quiet --no-cache-dir \
+            fastapi uvicorn[standard] websockets pycryptodome pyguitarpro \
+            Pillow midiutil python-multipart requests 2>&1 | tail -3
+        shell: bash
+        if: matrix.platform != 'win'
+
+      - name: Create Python venv (Windows)
+        run: |
+          python -m venv resources\python
+          resources\python\Scripts\python -m pip install --quiet --no-cache-dir fastapi "uvicorn[standard]" websockets pycryptodome pyguitarpro Pillow midiutil python-multipart requests
+        if: matrix.platform == 'win'
+
+      - name: Bundle system binaries
+        run: |
+          mkdir -p resources/bin
+          # Copy ffmpeg
+          if command -v ffmpeg &>/dev/null; then
+            cp $(which ffmpeg) resources/bin/ 2>/dev/null || true
+          fi
+          # Copy vgmstream if available
+          if command -v vgmstream-cli &>/dev/null; then
+            cp $(which vgmstream-cli) resources/bin/ 2>/dev/null || true
+          fi
+        shell: bash
+        if: matrix.platform != 'win'
+
+      - name: Bundle system binaries (Windows)
+        run: |
+          New-Item -ItemType Directory -Force -Path resources\bin
+          $ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue
+          if ($ffmpeg) { Copy-Item $ffmpeg.Source resources\bin\ }
+        if: matrix.platform == 'win'
+
+      # ── Package ─────────────────────────────────────────────────────────
       - name: Package
         run: npx electron-builder --${{ matrix.platform }}
         env:
