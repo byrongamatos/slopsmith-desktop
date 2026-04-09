@@ -1,0 +1,12 @@
+{
+    "id": "plugin_manager",
+    "name": "Plugin Manager",
+    "version": "0.1.0",
+    "description": "Install, update, and remove Slopsmith plugins",
+    "nav": {
+        "label": "Plugins",
+        "screen": "plugin-manager"
+    },
+    "screen": "screen.html",
+    "script": "screen.js"
+}

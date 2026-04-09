@@ -1,0 +1,89 @@
+{
+  "name": "slopsmith-desktop",
+  "version": "0.1.0",
+  "description": "Slopsmith desktop app with integrated audio engine, VST hosting, and amp modeling",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build:ts": "tsc",
+    "build:audio": "cmake-js build --runtime electron --runtime-version 35.0.0 --arch $(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/') -- -DCMAKE_BUILD_TYPE=Release",
+    "build:audio:debug": "cmake-js build --runtime electron --runtime-version 35.0.0 -- -DCMAKE_BUILD_TYPE=Debug",
+    "rebuild:audio": "cmake-js rebuild --runtime electron --runtime-version 35.0.0",
+    "start": "npm run build:ts && electron .",
+    "dev": "tsc && electron .",
+    "bundle": "bash scripts/bundle.sh",
+    "dist": "npm run bundle && npm run build:ts && electron-builder",
+    "dist:linux": "npm run dist -- --linux",
+    "dist:mac": "npm run dist -- --mac",
+    "dist:win": "npm run dist -- --win",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "build": {
+    "appId": "com.byron.slopsmith-desktop",
+    "productName": "Slopsmith",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "build/Release/*.node"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/slopsmith",
+        "to": "slopsmith"
+      },
+      {
+        "from": "resources/python",
+        "to": "python"
+      },
+      {
+        "from": "resources/bin",
+        "to": "bin"
+      },
+      {
+        "from": "resources/default-irs",
+        "to": "default-irs"
+      }
+    ],
+    "asarUnpack": [
+      "build/Release/*.node"
+    ],
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Audio",
+      "icon": "resources/icons"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.music",
+      "icon": "resources/icons/icon.icns",
+      "hardenedRuntime": true,
+      "entitlements": "resources/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Slopsmith needs microphone access for guitar input and note detection."
+      }
+    },
+    "win": {
+      "target": ["nsis"],
+      "icon": "resources/icons/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "node-addon-api": "^8.3.1"
+  },
+  "devDependencies": {
+    "cmake-js": "^7.3.0",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  },
+  "cmake-js": {
+    "runtime": "electron",
+    "runtimeVersion": "35.0.0"
+  }
+}

@@ -1,0 +1,46 @@
+node_modules/
+dist/
+build/
+release/
+*.node
+
+# JUCE build artifacts (submodule itself is tracked)
+# JUCE/  — tracked as submodule
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+venv/
+
+# Logs
+*.log
+npm-debug.log*
+
+# NAM models (user downloads)
+models/
+
+# User config
+config/
+
+# Bundle artifacts (created by scripts/bundle.sh)
+resources/slopsmith/
+resources/python/
+resources/bin/
+
+# Lock files
+package-lock.json
+
+# Venv
+.venv/
+.tmp/

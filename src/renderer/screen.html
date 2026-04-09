@@ -1,0 +1,174 @@
+<div id="audio-engine-panel" class="p-4 pt-20 max-w-5xl mx-auto">
+    <!-- Status Bar -->
+    <div id="ae-status" class="mb-4 p-3 rounded-lg bg-slate-800/50 flex items-center justify-between">
+        <div class="flex items-center gap-3">
+            <span id="ae-status-dot" class="w-3 h-3 rounded-full bg-red-500"></span>
+            <span id="ae-status-text" class="text-sm text-slate-400">Audio engine not available</span>
+        </div>
+        <div class="flex items-center gap-2">
+            <span id="ae-latency" class="text-xs text-slate-500"></span>
+            <button id="ae-toggle" class="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-sm font-medium disabled:opacity-50" disabled>
+                Start
+            </button>
+        </div>
+    </div>
+
+    <!-- Device Settings -->
+    <div class="mb-6">
+        <h3 class="text-lg font-semibold mb-3 text-slate-200">Audio Device</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Device Type</label>
+                <select id="ae-device-type" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">
+                    <option>Loading...</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Input Channel</label>
+                <select id="ae-input-channel" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">
+                    <option value="-1">Both (Mono Mix)</option>
+                    <option value="0">Left (Ch 1 / Dry)</option>
+                    <option value="1">Right (Ch 2 / Wet)</option>
+                </select>
+            </div>
+            <div class="md:col-span-2">
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" id="ae-monitor-mute" checked
+                           class="w-4 h-4 rounded bg-slate-700 border-slate-600 accent-emerald-500">
+                    <span class="text-sm text-slate-300">Mute direct monitoring</span>
+                    <span class="text-xs text-slate-500">(only hear guitar through signal chain plugins)</span>
+                </label>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Input Device</label>
+                <select id="ae-input-device" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">
+                    <option>Select device type first</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Output Device</label>
+                <select id="ae-output-device" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">
+                    <option>Select device type first</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Sample Rate</label>
+                <select id="ae-sample-rate" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">
+                    <option value="44100">44100 Hz</option>
+                    <option value="48000" selected>48000 Hz</option>
+                    <option value="96000">96000 Hz</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Buffer Size</label>
+                <select id="ae-buffer-size" class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">
+                    <option value="64">64 samples (~1.3ms)</option>
+                    <option value="128">128 samples (~2.7ms)</option>
+                    <option value="256" selected>256 samples (~5.3ms)</option>
+                    <option value="512">512 samples (~10.7ms)</option>
+                    <option value="1024">1024 samples (~21.3ms)</option>
+                </select>
+            </div>
+        </div>
+        <button id="ae-apply-device" class="mt-3 px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-sm font-medium">
+            Apply Device Settings
+        </button>
+    </div>
+
+    <!-- Level Meters -->
+    <div class="mb-6">
+        <h3 class="text-lg font-semibold mb-3 text-slate-200">Levels</h3>
+        <div class="grid grid-cols-2 gap-4">
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Input</label>
+                <div class="h-4 bg-slate-800 rounded overflow-hidden">
+                    <div id="ae-meter-input" class="h-full bg-emerald-500 transition-all duration-75" style="width:0%"></div>
+                </div>
+                <div class="flex justify-between mt-1">
+                    <input type="range" id="ae-input-gain" min="0" max="2" step="0.01" value="1" class="w-full accent-emerald-500">
+                    <span id="ae-input-gain-label" class="text-xs text-slate-400 ml-2 whitespace-nowrap">1.0x</span>
+                </div>
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Output</label>
+                <div class="h-4 bg-slate-800 rounded overflow-hidden">
+                    <div id="ae-meter-output" class="h-full bg-blue-500 transition-all duration-75" style="width:0%"></div>
+                </div>
+                <div class="flex justify-between mt-1">
+                    <input type="range" id="ae-output-gain" min="0" max="2" step="0.01" value="1" class="w-full accent-blue-500">
+                    <span id="ae-output-gain-label" class="text-xs text-slate-400 ml-2 whitespace-nowrap">1.0x</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signal Chain -->
+    <div class="mb-6">
+        <h3 class="text-lg font-semibold mb-3 text-slate-200">Signal Chain</h3>
+        <div id="ae-chain" class="space-y-2 mb-3">
+            <div class="text-sm text-slate-500 italic">No processors loaded</div>
+        </div>
+        <div class="flex gap-2 flex-wrap">
+            <button id="ae-add-vst" class="px-3 py-1.5 rounded bg-purple-600 hover:bg-purple-500 text-sm">
+                + VST Plugin
+            </button>
+            <button id="ae-add-nam" class="px-3 py-1.5 rounded bg-orange-600 hover:bg-orange-500 text-sm">
+                + NAM Model
+            </button>
+            <button id="ae-add-ir" class="px-3 py-1.5 rounded bg-cyan-600 hover:bg-cyan-500 text-sm">
+                + Cabinet IR
+            </button>
+            <button id="ae-clear-chain" class="px-3 py-1.5 rounded bg-slate-600 hover:bg-slate-500 text-sm">
+                Clear All
+            </button>
+        </div>
+    </div>
+
+    <!-- VST Plugin Browser -->
+    <div id="ae-vst-browser" class="mb-6 hidden">
+        <h3 class="text-lg font-semibold mb-3 text-slate-200">VST Plugins</h3>
+        <div class="flex gap-2 mb-3">
+            <button id="ae-scan-vsts" class="px-3 py-1.5 rounded bg-slate-600 hover:bg-slate-500 text-sm">
+                Scan for Plugins
+            </button>
+            <input type="text" id="ae-vst-search" placeholder="Search plugins..."
+                   class="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm">
+        </div>
+        <div id="ae-vst-list" class="max-h-64 overflow-y-auto space-y-1">
+            <div class="text-sm text-slate-500 italic">Click "Scan for Plugins" to find installed VST plugins</div>
+        </div>
+    </div>
+
+    <!-- Pitch Detection Display -->
+    <div class="mb-6">
+        <h3 class="text-lg font-semibold mb-3 text-slate-200">Pitch Detection</h3>
+        <div class="flex items-center gap-6">
+            <div class="text-center">
+                <div id="ae-pitch-note" class="text-4xl font-bold text-emerald-400">--</div>
+                <div id="ae-pitch-freq" class="text-xs text-slate-400">-- Hz</div>
+            </div>
+            <div class="flex-1">
+                <div class="relative h-8 bg-slate-800 rounded">
+                    <div class="absolute left-1/2 top-0 bottom-0 w-0.5 bg-slate-500"></div>
+                    <div id="ae-pitch-cents" class="absolute top-1 bottom-1 w-2 bg-emerald-400 rounded transition-all duration-75"
+                         style="left:50%"></div>
+                </div>
+                <div class="flex justify-between text-xs text-slate-500 mt-1">
+                    <span>-50c</span>
+                    <span>0</span>
+                    <span>+50c</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Preset Management -->
+    <div class="mb-6">
+        <h3 class="text-lg font-semibold mb-3 text-slate-200">Presets</h3>
+        <div class="flex gap-2">
+            <button id="ae-save-preset" class="px-3 py-1.5 rounded bg-slate-600 hover:bg-slate-500 text-sm">
+                Save Current Chain
+            </button>
+        </div>
+    </div>
+</div>

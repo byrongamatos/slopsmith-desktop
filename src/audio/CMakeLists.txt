@@ -1,0 +1,129 @@
+# Slopsmith Audio Engine — Node.js native addon built with JUCE
+# Produces slopsmith_audio.node loadable via require()
+
+set(AUDIO_SOURCES
+    NodeAddon.cpp
+    AudioEngine.cpp
+    SignalChain.cpp
+    VSTHost.cpp
+    NAMProcessor.cpp
+    IRLoader.cpp
+    PitchDetector.cpp
+)
+
+# Build as shared library (.node)
+add_library(slopsmith_audio SHARED ${AUDIO_SOURCES} ${CMAKE_JS_SRC})
+
+# Output as .node file
+set_target_properties(slopsmith_audio PROPERTIES
+    PREFIX ""
+    SUFFIX ".node"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+)
+
+# Node.js / N-API headers
+if(DEFINED CMAKE_JS_INC)
+    target_include_directories(slopsmith_audio PRIVATE ${CMAKE_JS_INC})
+endif()
+
+# node-addon-api headers (installed via npm)
+execute_process(
+    COMMAND node -p "require('node-addon-api').include"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE NAPI_INCLUDE_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+string(REPLACE "\"" "" NAPI_INCLUDE_DIR "${NAPI_INCLUDE_DIR}")
+target_include_directories(slopsmith_audio PRIVATE ${NAPI_INCLUDE_DIR})
+
+# N-API version
+target_compile_definitions(slopsmith_audio PRIVATE NAPI_VERSION=9 NAPI_DISABLE_CPP_EXCEPTIONS)
+
+# JUCE modules — headless (no GUI)
+target_link_libraries(slopsmith_audio PRIVATE
+    juce::juce_audio_basics
+    juce::juce_audio_devices
+    juce::juce_audio_formats
+    juce::juce_audio_processors
+    juce::juce_core
+    juce::juce_dsp
+    juce::juce_events
+)
+
+# JUCE compile definitions
+target_compile_definitions(slopsmith_audio PRIVATE
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_LV2=1
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_MODAL_LOOPS_PERMITTED=1
+    JUCE_APPLICATION_NAME_STRING="SlopsmithAudio"
+    JUCE_STANDALONE_APPLICATION=0
+    JUCE_REPORT_APP_USAGE=0
+    JUCE_LOG_ASSERTIONS=0
+    JUCE_DISABLE_ASSERTIONS=1
+)
+
+# Platform-specific
+if(APPLE)
+    target_compile_definitions(slopsmith_audio PRIVATE
+        JUCE_PLUGINHOST_AU=1
+    )
+    target_link_libraries(slopsmith_audio PRIVATE
+        "-framework CoreAudio"
+        "-framework CoreMIDI"
+        "-framework AudioUnit"
+        "-framework AudioToolbox"
+        "-framework CoreFoundation"
+        "-framework Accelerate"
+    )
+elseif(WIN32)
+    target_compile_definitions(slopsmith_audio PRIVATE
+        JUCE_ASIO=1
+    )
+elseif(UNIX)
+    target_compile_definitions(slopsmith_audio PRIVATE
+        JUCE_JACK=1
+        JUCE_JACK_CLIENT_NAME="Slopsmith"
+        JUCE_ALSA=1
+    )
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(ALSA REQUIRED alsa)
+    target_link_libraries(slopsmith_audio PRIVATE ${ALSA_LIBRARIES})
+    target_include_directories(slopsmith_audio PRIVATE ${ALSA_INCLUDE_DIRS})
+
+    # JACK is loaded dynamically by JUCE
+    find_library(JACK_LIB jack)
+    if(JACK_LIB)
+        target_link_libraries(slopsmith_audio PRIVATE ${JACK_LIB})
+    endif()
+endif()
+
+# cmake-js library
+if(DEFINED CMAKE_JS_LIB)
+    target_link_libraries(slopsmith_audio PRIVATE ${CMAKE_JS_LIB})
+endif()
+
+# NAM support
+if(NAM_AVAILABLE)
+    # Include NAM core sources directly
+    file(GLOB NAM_SOURCES "${NAM_DIR}/NAM/*.cpp")
+    target_sources(slopsmith_audio PRIVATE ${NAM_SOURCES})
+    target_include_directories(slopsmith_audio PRIVATE
+        "${NAM_DIR}"
+        "${NAM_DIR}/Dependencies/eigen"
+        "${NAM_DIR}/Dependencies/nlohmann"
+        "${NAM_DIR}/Dependencies/AudioDSPTools"
+    )
+    target_compile_definitions(slopsmith_audio PRIVATE SLOPSMITH_NAM_SUPPORT=1)
+
+    if(RTNEURAL_AVAILABLE)
+        target_link_libraries(slopsmith_audio PRIVATE RTNeural)
+    endif()
+else()
+    target_compile_definitions(slopsmith_audio PRIVATE SLOPSMITH_NAM_SUPPORT=0)
+endif()
+
+# Include directory for our headers
+target_include_directories(slopsmith_audio PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

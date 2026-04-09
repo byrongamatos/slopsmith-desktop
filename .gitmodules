@@ -1,0 +1,12 @@
+[submodule "JUCE"]
+	path = JUCE
+	url = https://github.com/juce-framework/JUCE.git
+	branch = master
+[submodule "src/audio/third_party/RTNeural"]
+	path = src/audio/third_party/RTNeural
+	url = https://github.com/jatinchowdhury18/RTNeural.git
+	branch = main
+[submodule "src/audio/third_party/NAM"]
+	path = src/audio/third_party/NAM
+	url = https://github.com/sdatkinson/NeuralAmpModelerCore.git
+	branch = main

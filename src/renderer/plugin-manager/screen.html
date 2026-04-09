@@ -1,0 +1,27 @@
+<div id="plugin-manager-panel" class="p-4 max-w-3xl mx-auto">
+    <h2 class="text-xl font-bold mb-4 text-slate-200">Plugin Manager</h2>
+
+    <!-- Install -->
+    <div class="mb-6 p-4 rounded-lg bg-slate-800/50">
+        <h3 class="text-sm font-semibold mb-2 text-slate-300">Install Plugin</h3>
+        <div class="flex gap-2">
+            <input type="text" id="pm-git-url" placeholder="https://github.com/user/slopsmith-plugin-foo.git"
+                   class="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-2 text-sm">
+            <button id="pm-install-btn" class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-sm font-medium whitespace-nowrap">
+                Install
+            </button>
+        </div>
+        <div id="pm-install-msg" class="mt-2 text-sm hidden"></div>
+    </div>
+
+    <!-- Installed Plugins -->
+    <div>
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold text-slate-300">Installed Plugins</h3>
+            <button id="pm-refresh" class="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600">Refresh</button>
+        </div>
+        <div id="pm-list" class="space-y-2">
+            <div class="text-sm text-slate-500 italic">Loading...</div>
+        </div>
+    </div>
+</div>
