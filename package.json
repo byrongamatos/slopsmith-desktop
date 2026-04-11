@@ -2,6 +2,10 @@
   "name": "slopsmith-desktop",
   "version": "0.1.0",
   "description": "Slopsmith desktop app with integrated audio engine, VST hosting, and amp modeling",
+  "author": {
+    "name": "Byron",
+    "email": "byron@ougsoft.com"
+  },
   "main": "dist/main/main.js",
   "scripts": {
     "build:ts": "tsc",
