@@ -35,9 +35,14 @@ function findPythonExecutable(): string {
     if (app.isPackaged) {
         const resourcesPath = process.resourcesPath;
         const candidates = [
+            // Linux/macOS: venv with --copies or full runtime
+            path.join(resourcesPath, 'python', 'runtime', 'bin', 'python3'),
+            path.join(resourcesPath, 'python', 'runtime', 'bin', 'python'),
+            // Windows: embedded Python
+            path.join(resourcesPath, 'python', 'python.exe'),
+            // Fallback paths
             path.join(resourcesPath, 'python', 'bin', 'python3'),
             path.join(resourcesPath, 'python', 'python3'),
-            path.join(resourcesPath, 'python', 'python.exe'),
             path.join(resourcesPath, 'python', 'python'),
         ];
         for (const candidate of candidates) {
@@ -136,10 +141,11 @@ export async function startPython(): Promise<void> {
     console.log(`[python] User plugins: ${pluginsDir}`);
 
     // Build PYTHONPATH to include slopsmith's lib directory
-    const pythonPathEnv = [
+    const pythonPathParts = [
         slopsmithDir,
         path.join(slopsmithDir, 'lib'),
-    ].join(path.delimiter);
+    ];
+    const pythonPathEnv = pythonPathParts.join(path.delimiter);
 
     pythonProcess = spawn(pythonPath, [
         '-m', 'uvicorn', 'server:app',
