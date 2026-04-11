@@ -149,14 +149,22 @@ jobs:
               Pillow midiutil python-multipart requests 2>&1 | tail -5
 
           else
-            # Linux: create a standalone venv with --copies (real binaries, not symlinks)
-            python3 -m venv --copies resources/python/runtime
+            # Linux: copy full Python installation for a relocatable runtime
+            PYTHON_PREFIX=$(python3 -c "import sys; print(sys.prefix)")
+            mkdir -p resources/python/runtime
+            # Copy binary
+            cp "$PYTHON_PREFIX/bin/python3.12" resources/python/runtime/bin/python3
+            chmod +x resources/python/runtime/bin/python3
+            # Copy stdlib
+            cp -r "$PYTHON_PREFIX/lib" resources/python/runtime/
+            # Copy libpython shared library
+            PYTHON_LIBDIR=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
+            cp "$PYTHON_LIBDIR"/libpython3.12*.so* resources/python/runtime/lib/ 2>/dev/null || true
+            # Install packages into the runtime
+            LD_LIBRARY_PATH="resources/python/runtime/lib:$LD_LIBRARY_PATH" \
             resources/python/runtime/bin/python3 -m pip install --quiet --no-cache-dir \
               fastapi "uvicorn[standard]" websockets pycryptodome pyguitarpro \
               Pillow midiutil python-multipart requests 2>&1 | tail -5
-            # Bundle libpython shared library so the binary works standalone
-            PYTHON_LIB=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
-            cp "$PYTHON_LIB"/libpython3.12*.so* resources/python/runtime/lib/ 2>/dev/null || true
           fi
 
       - name: Bundle system binaries
