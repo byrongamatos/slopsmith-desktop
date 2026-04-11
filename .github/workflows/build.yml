@@ -155,7 +155,7 @@ jobs:
 
       # ── Package ─────────────────────────────────────────────────────────
       - name: Package
-        run: npx electron-builder --${{ matrix.platform }}
+        run: npx electron-builder --${{ matrix.platform }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
