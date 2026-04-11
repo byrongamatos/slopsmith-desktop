@@ -147,6 +147,24 @@ export async function startPython(): Promise<void> {
     ];
     const pythonPathEnv = pythonPathParts.join(path.delimiter);
 
+    // Build environment for Python process
+    const pythonEnv: Record<string, string> = {
+        ...process.env as Record<string, string>,
+        PYTHONPATH: pythonPathEnv,
+        CONFIG_DIR: configDir,
+        DLC_DIR: dlcDir,
+        SLOPSMITH_PLUGINS_DIR: pluginsDir,
+        PATH: (app.isPackaged
+            ? path.join(process.resourcesPath, 'bin') + path.delimiter
+            : '') + (process.env.PATH || ''),
+    };
+
+    // On Linux, set LD_LIBRARY_PATH so bundled Python finds libpython
+    if (app.isPackaged && process.platform === 'linux') {
+        const pythonLibDir = path.join(process.resourcesPath, 'python', 'runtime', 'lib');
+        pythonEnv.LD_LIBRARY_PATH = pythonLibDir + path.delimiter + (process.env.LD_LIBRARY_PATH || '');
+    }
+
     pythonProcess = spawn(pythonPath, [
         '-m', 'uvicorn', 'server:app',
         '--host', '127.0.0.1',
@@ -154,17 +172,7 @@ export async function startPython(): Promise<void> {
         '--no-access-log',
     ], {
         cwd: slopsmithDir,
-        env: {
-            ...process.env,
-            PYTHONPATH: pythonPathEnv,
-            CONFIG_DIR: configDir,
-            DLC_DIR: dlcDir,
-            SLOPSMITH_PLUGINS_DIR: pluginsDir,
-            // Add bundled binaries (ffmpeg, vgmstream-cli) to PATH
-            PATH: (app.isPackaged
-                ? path.join(process.resourcesPath, 'bin') + path.delimiter
-                : '') + (process.env.PATH || ''),
-        },
+        env: pythonEnv,
         stdio: ['pipe', 'pipe', 'pipe'],
     });
 

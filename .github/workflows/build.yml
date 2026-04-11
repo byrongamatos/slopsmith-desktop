@@ -154,6 +154,9 @@ jobs:
             resources/python/runtime/bin/python3 -m pip install --quiet --no-cache-dir \
               fastapi "uvicorn[standard]" websockets pycryptodome pyguitarpro \
               Pillow midiutil python-multipart requests 2>&1 | tail -5
+            # Bundle libpython shared library so the binary works standalone
+            PYTHON_LIB=$(python3 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
+            cp "$PYTHON_LIB"/libpython3.12*.so* resources/python/runtime/lib/ 2>/dev/null || true
           fi
 
       - name: Bundle system binaries
