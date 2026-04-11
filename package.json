@@ -61,8 +61,7 @@
       "target": ["dmg", "zip"],
       "category": "public.app-category.music",
       "icon": "resources/icons/icon.icns",
-      "hardenedRuntime": true,
-      "entitlements": "resources/entitlements.mac.plist",
+      "identity": null,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Slopsmith needs microphone access for guitar input and note detection."
       }
