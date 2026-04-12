@@ -145,6 +145,11 @@ export async function startPython(): Promise<void> {
         slopsmithDir,
         path.join(slopsmithDir, 'lib'),
     ];
+    // On Windows, include embedded Python's Lib/site-packages
+    if (app.isPackaged && process.platform === 'win32') {
+        const pythonDir = path.join(process.resourcesPath, 'python');
+        pythonPathParts.push(path.join(pythonDir, 'Lib', 'site-packages'));
+    }
     const pythonPathEnv = pythonPathParts.join(path.delimiter);
 
     // Build environment for Python process
