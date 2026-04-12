@@ -114,7 +114,7 @@ jobs:
             name=$(basename "$d")
             [ "$name" = "__pycache__" ] && continue
             mkdir -p "resources/slopsmith/plugins/$name"
-            cp "$d"/*.py "$d"/*.js "$d"/*.html "$d"/*.json "resources/slopsmith/plugins/$name/" 2>/dev/null || true
+            find "$d" -maxdepth 1 \( -name "*.py" -o -name "*.js" -o -name "*.html" -o -name "*.json" -o -name "*.css" \) -exec cp {} "resources/slopsmith/plugins/$name/" \;
           done
 
           # Desktop-specific plugins (audio_engine, plugin_manager)
