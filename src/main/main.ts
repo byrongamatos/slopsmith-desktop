@@ -38,7 +38,17 @@ function createWindow(port: number): void {
         console.log(`${prefix} ${message}`);
     });
 
-    mainWindow.loadURL(`http://127.0.0.1:${port}`);
+    const serverUrl = `http://127.0.0.1:${port}`;
+    mainWindow.loadURL(serverUrl);
+
+    // Retry loading if server wasn't ready yet
+    mainWindow.webContents.on('did-fail-load', (_event, errorCode, _errorDesc) => {
+        if (errorCode === -102 /* ERR_CONNECTION_REFUSED */ || errorCode === -6 /* ERR_CONNECTION_RESET */) {
+            setTimeout(() => {
+                mainWindow?.loadURL(serverUrl);
+            }, 1000);
+        }
+    });
 
     // Inject mutable sync offset after page loads (default 200ms, overridden by settings)
     mainWindow.webContents.on('did-finish-load', () => {
