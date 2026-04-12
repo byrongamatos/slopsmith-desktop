@@ -38,6 +38,10 @@ jobs:
         with:
           python-version: '3.12'
 
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
       # ── Platform dependencies ───────────────────────────────────────────
       - name: Install Linux dependencies
         if: matrix.platform == 'linux'
@@ -169,6 +173,23 @@ jobs:
               fastapi "uvicorn[standard]" websockets pycryptodome pyguitarpro \
               Pillow midiutil python-multipart requests 2>&1 | tail -5
           fi
+
+      - name: Build and bundle RsCli
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/byrongamatos/Rocksmith2014.NET.git /tmp/rs2014net
+          cd /tmp/rs2014net/tools/RsCli
+          if [ "${{ matrix.platform }}" = "win" ]; then
+            RID="win-x64"
+          elif [ "${{ matrix.platform }}" = "mac" ]; then
+            RID="osx-arm64"
+          else
+            RID="linux-x64"
+          fi
+          dotnet publish -c Release -r $RID --self-contained -o /tmp/rscli-out 2>&1 | tail -3
+          mkdir -p $GITHUB_WORKSPACE/resources/bin/rscli
+          cp -r /tmp/rscli-out/* $GITHUB_WORKSPACE/resources/bin/rscli/
+          echo "RsCli bundled for $RID ($(du -sh $GITHUB_WORKSPACE/resources/bin/rscli/ | cut -f1))"
 
       - name: Bundle system binaries
         run: |

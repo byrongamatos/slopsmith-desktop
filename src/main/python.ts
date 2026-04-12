@@ -154,6 +154,10 @@ export async function startPython(): Promise<void> {
         CONFIG_DIR: configDir,
         DLC_DIR: dlcDir,
         SLOPSMITH_PLUGINS_DIR: pluginsDir,
+        RSCLI_PATH: app.isPackaged
+            ? path.join(process.resourcesPath, 'bin', 'rscli', process.platform === 'win32' ? 'RsCli.exe' : 'RsCli')
+            : '',
+        RESOURCESPATH: app.isPackaged ? process.resourcesPath : '',
         PATH: (app.isPackaged
             ? path.join(process.resourcesPath, 'bin') + path.delimiter
             : '') + (process.env.PATH || ''),
