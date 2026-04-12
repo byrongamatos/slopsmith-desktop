@@ -151,7 +151,7 @@ jobs:
           else
             # Linux: copy full Python installation for a relocatable runtime
             PYTHON_PREFIX=$(python3 -c "import sys; print(sys.prefix)")
-            mkdir -p resources/python/runtime
+            mkdir -p resources/python/runtime/bin
             # Copy binary
             cp "$PYTHON_PREFIX/bin/python3.12" resources/python/runtime/bin/python3
             chmod +x resources/python/runtime/bin/python3
