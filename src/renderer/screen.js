@@ -462,6 +462,41 @@
         }
     }
 
+    // ── Settings path pickers ──────────────────────────────────────────────────
+    function setupPathPickers() {
+        const pickers = [
+            { btn: 'ae-pick-dlc', input: 'ae-dlc-path', key: 'dlcDir' },
+            { btn: 'ae-pick-nam', input: 'ae-nam-path', key: 'namDir' },
+            { btn: 'ae-pick-ir', input: 'ae-ir-path', key: 'irDir' },
+        ];
+        for (const { btn, input, key } of pickers) {
+            const btnEl = $(btn);
+            const inputEl = $(input);
+            if (!btnEl || !inputEl) continue;
+
+            // Load saved value
+            const saved = localStorage.getItem('slopsmith-' + key);
+            if (saved) inputEl.value = saved;
+
+            btnEl.addEventListener('click', async () => {
+                const dir = await window.slopsmithDesktop.pickDirectory();
+                if (dir) {
+                    inputEl.value = dir;
+                    localStorage.setItem('slopsmith-' + key, dir);
+                    // If it's the DLC dir, also update the server
+                    if (key === 'dlcDir') {
+                        await fetch('/api/settings', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ dlc_dir: dir }),
+                        });
+                    }
+                }
+            });
+        }
+    }
+    setupPathPickers();
+
     // ── Start ─────────────────────────────────────────────────────────────────
     init().catch(e => console.error('[audio-engine] init error:', e));
 })();
