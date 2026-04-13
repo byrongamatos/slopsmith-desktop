@@ -157,12 +157,12 @@ export function initAudioBridge(mainWindow: BrowserWindow | null): void {
         return audio?.loadVST(pluginPath) ?? -1;
     });
 
-    ipcMain.handle('audio:loadNAMModel', (_event, modelPath: string) => {
-        return audio?.loadNAMModel(modelPath) ?? -1;
+    ipcMain.handle('audio:loadNAMModel', async (_event, modelPath: string) => {
+        return await audio?.loadNAMModel(modelPath) ?? -1;
     });
 
-    ipcMain.handle('audio:loadIR', (_event, irPath: string) => {
-        return audio?.loadIR(irPath) ?? -1;
+    ipcMain.handle('audio:loadIR', async (_event, irPath: string) => {
+        return await audio?.loadIR(irPath) ?? -1;
     });
 
     ipcMain.handle('audio:removeProcessor', (_event, slotId: number) => {

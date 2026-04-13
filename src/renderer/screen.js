@@ -124,6 +124,32 @@
                 statusText.textContent = 'Audio running';
             }
         }
+
+        // Restore saved signal chain (NAM models, IRs)
+        const savedChain = JSON.parse(localStorage.getItem('slopsmith-signal-chain') || '[]');
+        for (const item of savedChain) {
+            try {
+                if (item.type === 'NAM' && item.path) {
+                    await api.loadNAMModel(item.path);
+                } else if (item.type === 'IR' && item.path) {
+                    await api.loadIR(item.path);
+                }
+            } catch (e) {
+                console.error('[audio-engine] Failed to restore chain item:', item, e);
+            }
+        }
+        if (savedChain.length > 0) await refreshChain();
+    }
+
+    function saveChainState() {
+        api.getChain().then(chain => {
+            const items = chain.filter(s => s.type === 1 || s.type === 2).map(s => ({
+                type: s.type === 1 ? 'NAM' : 'IR',
+                path: s.path || '',
+                name: s.name || '',
+            }));
+            localStorage.setItem('slopsmith-signal-chain', JSON.stringify(items));
+        }).catch(() => {});
     }
 
     // ── Device Types ──────────────────────────────────────────────────────────
@@ -331,6 +357,11 @@
         // Apply device settings and start audio
         applyDeviceBtn.addEventListener('click', async () => {
             statusText.textContent = 'Configuring device...';
+            // Stop audio first to release the device before reconfiguring
+            if (audioRunning) {
+                await api.stopAudio();
+                audioRunning = false;
+            }
             const typeName = deviceTypeSelect.value;
             await api.setDeviceType(typeName);
             const ok = await api.setDevice(
@@ -390,7 +421,7 @@
             ]);
             if (filePath) {
                 const slotId = await api.loadNAMModel(filePath);
-                if (slotId >= 0) await refreshChain();
+                if (slotId >= 0) { await refreshChain(); saveChainState(); }
             }
         });
 
@@ -405,7 +436,7 @@
             if (filePath) {
                 const slotId = await api.loadIR(filePath);
                 console.error('[audio-engine] loadIR returned slotId:', slotId);
-                if (slotId >= 0) await refreshChain();
+                if (slotId >= 0) { await refreshChain(); saveChainState(); }
             }
         });
 
@@ -413,6 +444,7 @@
         clearChainBtn.addEventListener('click', async () => {
             await api.clearChain();
             await refreshChain();
+            saveChainState();
         });
 
         // Scan VSTs

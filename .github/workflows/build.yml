@@ -87,7 +87,7 @@ jobs:
           find "$SLOPSMITH_TMP/plugins" -maxdepth 1 -type l -delete 2>/dev/null || true
 
           cd "$SLOPSMITH_TMP/plugins"
-          for repo in 3dhighway backingtrack cf discextract fretboard metronome midi notedetect practice profileimport rs1extract sectionmap setlist tabimport tabview tones ug; do
+          for repo in 3dhighway backingtrack cf fretboard metronome midi notedetect practice profileimport sectionmap setlist tabimport tabview tones ug; do
             git clone --depth 1 "https://github.com/byrongamatos/slopsmith-plugin-${repo}.git" "${repo}" 2>/dev/null || echo "  skipped ${repo}"
           done
           echo "Plugins cloned: $(ls -d */ 2>/dev/null | wc -l)"

@@ -132,18 +132,44 @@ bool AudioEngine::setAudioDevice(const juce::String& inputName, const juce::Stri
     fprintf(stderr, "[AudioEngine] setAudioDevice: in='%s' out='%s' sr=%.0f bs=%d\n",
             inputName.toRawUTF8(), outputName.toRawUTF8(), sampleRate, bufferSize);
 
+    // Skip if already configured with the same settings
+    if (deviceManager.getCurrentAudioDevice() != nullptr)
+    {
+        juce::AudioDeviceManager::AudioDeviceSetup current;
+        deviceManager.getAudioDeviceSetup(current);
+        if (current.inputDeviceName == inputName && current.outputDeviceName == outputName
+            && current.sampleRate == sampleRate && current.bufferSize == bufferSize)
+        {
+            fprintf(stderr, "[AudioEngine] Device already configured with same settings, skipping\n");
+            return true;
+        }
+    }
+
     bool wasRunning = audioRunning;
     if (wasRunning) stopAudio();
 
-    // Initialize device manager if needed
-    if (deviceManager.getCurrentAudioDevice() == nullptr)
+    // Save current device type name before closing
+    juce::String currentTypeName;
+    if (auto* currentType = deviceManager.getCurrentDeviceTypeObject())
+        currentTypeName = currentType->getTypeName();
+
+    // Close the device completely to avoid ALSA deadlocks on reconfigure
+    if (deviceManager.getCurrentAudioDevice() != nullptr)
     {
-        // Try to find a working device type
-        bool initialized = false;
+        deviceManager.closeAudioDevice();
+        fprintf(stderr, "[AudioEngine] Closed device for reconfiguration\n");
+
+        // Re-set the device type so the device list is repopulated
+        if (currentTypeName.isNotEmpty())
+            deviceManager.setCurrentAudioDeviceType(currentTypeName, true);
+    }
+
+    // Initialize if no device type set yet
+    if (deviceManager.getCurrentDeviceTypeObject() == nullptr)
+    {
         for (auto* type : deviceManager.getAvailableDeviceTypes())
         {
             auto typeName = type->getTypeName();
-            // Prefer JACK on Linux, CoreAudio on Mac, ASIO on Windows
 #if JUCE_LINUX
             if (typeName == "JACK" || typeName == "ALSA")
 #elif JUCE_MAC
@@ -155,36 +181,19 @@ bool AudioEngine::setAudioDevice(const juce::String& inputName, const juce::Stri
 #endif
             {
                 deviceManager.setCurrentAudioDeviceType(typeName, true);
-                auto result = deviceManager.initialiseWithDefaultDevices(2, 2);
-                if (result.isEmpty())
-                {
-                    initialized = true;
-                    break;
-                }
-            }
-        }
-
-        if (!initialized)
-        {
-            auto result = deviceManager.initialiseWithDefaultDevices(2, 2);
-            if (result.isNotEmpty())
-            {
-                DBG("Audio init error: " + result);
-                return false;
+                break;
             }
         }
     }
 
     // Configure specific devices
     juce::AudioDeviceManager::AudioDeviceSetup setup;
-    deviceManager.getAudioDeviceSetup(setup);
-
-    if (inputName.isNotEmpty()) setup.inputDeviceName = inputName;
-    if (outputName.isNotEmpty()) setup.outputDeviceName = outputName;
-    if (sampleRate > 0) setup.sampleRate = sampleRate;
-    if (bufferSize > 0) setup.bufferSize = bufferSize;
-    setup.inputChannels.setRange(0, 2, true);   // stereo input
-    setup.outputChannels.setRange(0, 2, true);  // stereo output
+    setup.inputDeviceName = inputName;
+    setup.outputDeviceName = outputName;
+    setup.sampleRate = sampleRate > 0 ? sampleRate : 48000.0;
+    setup.bufferSize = bufferSize > 0 ? bufferSize : 256;
+    setup.inputChannels.setRange(0, 2, true);
+    setup.outputChannels.setRange(0, 2, true);
     setup.useDefaultInputChannels = inputName.isEmpty();
     setup.useDefaultOutputChannels = outputName.isEmpty();
 
@@ -192,11 +201,21 @@ bool AudioEngine::setAudioDevice(const juce::String& inputName, const juce::Stri
     if (result.isNotEmpty())
     {
         fprintf(stderr, "[AudioEngine] Device setup error: %s\n", result.toRawUTF8());
-        return false;
+        // Try fallback: initialize with defaults
+        result = deviceManager.initialiseWithDefaultDevices(2, 2);
+        if (result.isNotEmpty())
+        {
+            fprintf(stderr, "[AudioEngine] Fallback init also failed: %s\n", result.toRawUTF8());
+            return false;
+        }
     }
 
     fprintf(stderr, "[AudioEngine] Device configured OK. Current device: %s\n",
             deviceManager.getCurrentAudioDevice() ? deviceManager.getCurrentAudioDevice()->getName().toRawUTF8() : "none");
+
+    signalChain.prepare(
+        deviceManager.getCurrentAudioDevice()->getCurrentSampleRate(),
+        deviceManager.getCurrentAudioDevice()->getCurrentBufferSizeSamples());
 
     if (wasRunning) startAudio();
     return true;

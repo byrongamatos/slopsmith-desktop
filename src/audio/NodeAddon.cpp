@@ -198,6 +198,7 @@ static Napi::Value SetDevice(const Napi::CallbackInfo& info)
     double sr = info.Length() > 2 && !info[2].IsUndefined() ? info[2].As<Napi::Number>().DoubleValue() : 48000.0;
     int bs = info.Length() > 3 && !info[3].IsUndefined() ? info[3].As<Napi::Number>().Int32Value() : 256;
 
+    // Must run on the main thread — JUCE's ALSA backend deadlocks if called from a worker
     bool result = engine->setAudioDevice(juce::String(input), juce::String(output), sr, bs);
     return Napi::Boolean::New(env, result);
 }
@@ -457,52 +458,100 @@ static Napi::Value LoadVST(const Napi::CallbackInfo& info)
     return Napi::Number::New(env, slotId);
 }
 
+class LoadNAMWorker : public Napi::AsyncWorker
+{
+public:
+    LoadNAMWorker(Napi::Env env, Napi::Promise::Deferred deferred, std::string path)
+        : Napi::AsyncWorker(env), deferred_(deferred), modelPath_(std::move(path)) {}
+
+    void Execute() override
+    {
+        if (!engine) { slotId_ = -1; return; }
+
+        auto processor = std::make_unique<NAMProcessor>();
+        if (processor->loadModel(juce::File(juce::String(modelPath_))))
+        {
+            auto name = processor->getModelName();
+            slotId_ = engine->getSignalChain().addProcessor(
+                std::move(processor),
+                ProcessorSlot::Type::NAM,
+                "NAM: " + name,
+                juce::String(modelPath_));
+        }
+    }
+
+    void OnOK() override { deferred_.Resolve(Napi::Number::New(Env(), slotId_)); }
+    void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
+
+private:
+    Napi::Promise::Deferred deferred_;
+    std::string modelPath_;
+    int slotId_ = -1;
+};
+
 static Napi::Value LoadNAMModel(const Napi::CallbackInfo& info)
 {
     auto env = info.Env();
-    if (!engine || info.Length() < 1)
-        return Napi::Number::New(env, -1);
+    auto deferred = Napi::Promise::Deferred::New(env);
 
-    auto modelPath = info[0].As<Napi::String>().Utf8Value();
-    int slotId = -1;
-
-    auto processor = std::make_unique<NAMProcessor>();
-    if (processor->loadModel(juce::File(juce::String(modelPath))))
-    {
-        auto name = processor->getModelName();
-        slotId = engine->getSignalChain().addProcessor(
-            std::move(processor),
-            ProcessorSlot::Type::NAM,
-            "NAM: " + name,
-            juce::String(modelPath));
+    if (!engine || info.Length() < 1) {
+        deferred.Resolve(Napi::Number::New(env, -1));
+        return deferred.Promise();
     }
 
-    return Napi::Number::New(env, slotId);
+    auto modelPath = info[0].As<Napi::String>().Utf8Value();
+    auto worker = new LoadNAMWorker(env, deferred, modelPath);
+    worker->Queue();
+    return deferred.Promise();
 }
+
+class LoadIRWorker : public Napi::AsyncWorker
+{
+public:
+    LoadIRWorker(Napi::Env env, Napi::Promise::Deferred deferred, std::string path)
+        : Napi::AsyncWorker(env), deferred_(deferred), irPath_(std::move(path)) {}
+
+    void Execute() override
+    {
+        if (!engine) { slotId_ = -1; return; }
+
+        auto processor = std::make_unique<IRLoader>();
+        processor->setPlayConfigDetails(2, 2, engine->getCurrentSampleRate(), engine->getCurrentBlockSize());
+        processor->prepareToPlay(engine->getCurrentSampleRate(), engine->getCurrentBlockSize());
+        if (processor->loadIR(juce::File(juce::String(irPath_))))
+        {
+            auto name = processor->getIRName();
+            slotId_ = engine->getSignalChain().addProcessor(
+                    std::move(processor),
+                    ProcessorSlot::Type::IR,
+                    "IR: " + name,
+                    juce::String(irPath_));
+        }
+    }
+
+    void OnOK() override { deferred_.Resolve(Napi::Number::New(Env(), slotId_)); }
+    void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
+
+private:
+    Napi::Promise::Deferred deferred_;
+    std::string irPath_;
+    int slotId_ = -1;
+};
 
 static Napi::Value LoadIR(const Napi::CallbackInfo& info)
 {
     auto env = info.Env();
-    if (!engine || info.Length() < 1)
-        return Napi::Number::New(env, -1);
+    auto deferred = Napi::Promise::Deferred::New(env);
 
-    auto irPath = info[0].As<Napi::String>().Utf8Value();
-    int slotId = -1;
-
-    auto processor = std::make_unique<IRLoader>();
-    processor->setPlayConfigDetails(2, 2, engine->getCurrentSampleRate(), engine->getCurrentBlockSize());
-    processor->prepareToPlay(engine->getCurrentSampleRate(), engine->getCurrentBlockSize());
-    if (processor->loadIR(juce::File(juce::String(irPath))))
-    {
-        auto name = processor->getIRName();
-        slotId = engine->getSignalChain().addProcessor(
-                std::move(processor),
-                ProcessorSlot::Type::IR,
-                "IR: " + name,
-                juce::String(irPath));
+    if (!engine || info.Length() < 1) {
+        deferred.Resolve(Napi::Number::New(env, -1));
+        return deferred.Promise();
     }
 
-    return Napi::Number::New(env, slotId);
+    auto irPath = info[0].As<Napi::String>().Utf8Value();
+    auto worker = new LoadIRWorker(env, deferred, irPath);
+    worker->Queue();
+    return deferred.Promise();
 }
 
 static Napi::Value RemoveProcessor(const Napi::CallbackInfo& info)
