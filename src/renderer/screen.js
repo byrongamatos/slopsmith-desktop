@@ -125,11 +125,13 @@
             }
         }
 
-        // Restore saved signal chain (NAM models, IRs)
+        // Restore saved signal chain (VSTs, NAM models, IRs)
         const savedChain = JSON.parse(localStorage.getItem('slopsmith-signal-chain') || '[]');
         for (const item of savedChain) {
             try {
-                if (item.type === 'NAM' && item.path) {
+                if (item.type === 'VST' && item.path) {
+                    await api.loadVST(item.path);
+                } else if (item.type === 'NAM' && item.path) {
                     await api.loadNAMModel(item.path);
                 } else if (item.type === 'IR' && item.path) {
                     await api.loadIR(item.path);
@@ -143,8 +145,9 @@
 
     function saveChainState() {
         api.getChain().then(chain => {
-            const items = chain.filter(s => s.type === 1 || s.type === 2).map(s => ({
-                type: s.type === 1 ? 'NAM' : 'IR',
+            const typeMap = { 0: 'VST', 1: 'NAM', 2: 'IR' };
+            const items = chain.filter(s => s.type === 0 || s.type === 1 || s.type === 2).map(s => ({
+                type: typeMap[s.type] || 'VST',
                 path: s.path || '',
                 name: s.name || '',
             }));

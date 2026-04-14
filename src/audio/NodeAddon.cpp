@@ -629,6 +629,7 @@ public:
         setContentOwned(ed, true);
         setResizable(true, false);
         setUsingNativeTitleBar(true);
+        setAlwaysOnTop(true);
         centreWithSize(ed->getWidth(), ed->getHeight());
         setVisible(true);
         toFront(true);
@@ -636,6 +637,19 @@ public:
 
     void closeButtonPressed() override
     {
+        // Remove from map so editor can be reopened
+        for (auto it = editorWindows.begin(); it != editorWindows.end(); ++it)
+        {
+            if (it->second.get() == this)
+            {
+                // Can't erase during iteration from this context, defer it
+                auto slotId = it->first;
+                juce::MessageManager::callAsync([slotId]() {
+                    editorWindows.erase(slotId);
+                });
+                break;
+            }
+        }
         setVisible(false);
     }
 };
@@ -652,10 +666,15 @@ static Napi::Value OpenPluginEditor(const Napi::CallbackInfo& info)
 
     // If already open, bring to front
     auto it = editorWindows.find(slotId);
-    if (it != editorWindows.end() && it->second && it->second->isVisible())
+    if (it != editorWindows.end() && it->second)
     {
-        it->second->toFront(true);
-        return Napi::Boolean::New(env, true);
+        if (it->second->isVisible())
+        {
+            it->second->toFront(true);
+            return Napi::Boolean::New(env, true);
+        }
+        // Window was hidden/closed, remove stale entry
+        editorWindows.erase(it);
     }
 
     auto slot = engine->getSignalChain().getSlot(slotId);
@@ -668,7 +687,14 @@ static Napi::Value OpenPluginEditor(const Napi::CallbackInfo& info)
 
     juce::MessageManager::callAsync([processor, name, slotId]()
     {
-        auto* editor = processor->createEditor();
+        juce::AudioProcessorEditor* editor = nullptr;
+        try {
+            editor = processor->createEditor();
+        } catch (const std::exception& e) {
+            fprintf(stderr, "[AudioEngine] createEditor crashed for '%s': %s\n", name.toRawUTF8(), e.what());
+        } catch (...) {
+            fprintf(stderr, "[AudioEngine] createEditor crashed for '%s': unknown error\n", name.toRawUTF8());
+        }
         if (editor)
         {
             editorWindows[slotId] = std::make_unique<PluginEditorWindow>(editor, name);
