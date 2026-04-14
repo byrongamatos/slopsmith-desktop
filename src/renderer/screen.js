@@ -939,6 +939,7 @@
 
     let _toneMonitor = null;
     let _lastTone = null;
+    let _preloadedSongKey = null;
 
     function showToneToast(name) {
         let toast = document.getElementById('tone-toast');
@@ -991,6 +992,12 @@
     window.playSong = async function(filename, arrangement) {
         if (_toneMonitor) { clearInterval(_toneMonitor); _toneMonitor = null; }
         _lastTone = null;
+        // Reset preload tracking for new song (different filename = new song)
+        const newSongKey = decodeURIComponent(filename);
+        if (_preloadedSongKey && !_preloadedSongKey.includes(newSongKey.split('_p.')[0])) {
+            _preloadedSongKey = null;
+            window._toneSwitcher = null;
+        }
 
         await origPS(filename, arrangement);
 
@@ -1023,6 +1030,14 @@
             if (toneChanges.length === 0) return;
 
             const songKey = document.title || '';
+
+            // Skip if already preloaded for this song
+            if (_preloadedSongKey === songKey && window._toneSwitcher) {
+                // Just reset to initial tone
+                window._toneSwitcher.switchToTone(toneBase);
+                return;
+            }
+
             const allMappings = JSON.parse(localStorage.getItem('slopsmith-tone-mappings') || '{"global":{},"songs":{}}');
             const mappings = { ...allMappings.global, ...(allMappings.songs[songKey] || {}) };
             if (Object.keys(mappings).length === 0) return;
@@ -1033,8 +1048,9 @@
             const toneNames = new Set([toneBase]);
             for (const tc of toneChanges) toneNames.add(tc.name);
 
-            // Clear chain and preload all mapped presets
+            // Clear chain before preloading new tone processors
             await api.clearChain();
+            window._toneSwitcher = null;
             const toneSlotMap = {};
 
             for (const toneName of toneNames) {
@@ -1073,6 +1089,7 @@
                     console.log('[tone-switcher] Switched to:', name);
                 }
             };
+            _preloadedSongKey = songKey;
             console.log('[tone-switcher] Preloaded:', Object.keys(toneSlotMap));
         }, 3000);
     };
