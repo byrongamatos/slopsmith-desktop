@@ -620,6 +620,9 @@ static Napi::Value GetChainState(const Napi::CallbackInfo& info)
 
 // ── Plugin Editor Window ──────────────────────────────────────────────────────
 
+class PluginEditorWindow;
+static std::map<int, std::unique_ptr<PluginEditorWindow>> editorWindows;
+
 class PluginEditorWindow : public juce::DocumentWindow
 {
 public:
@@ -642,7 +645,6 @@ public:
         {
             if (it->second.get() == this)
             {
-                // Can't erase during iteration from this context, defer it
                 auto slotId = it->first;
                 juce::MessageManager::callAsync([slotId]() {
                     editorWindows.erase(slotId);
@@ -653,8 +655,6 @@ public:
         setVisible(false);
     }
 };
-
-static std::map<int, std::unique_ptr<PluginEditorWindow>> editorWindows;
 
 static Napi::Value OpenPluginEditor(const Napi::CallbackInfo& info)
 {
