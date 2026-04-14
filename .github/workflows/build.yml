@@ -208,10 +208,23 @@ jobs:
         if: matrix.platform != 'win'
 
       - name: Bundle system binaries (Windows)
+        shell: bash
         run: |
-          New-Item -ItemType Directory -Force -Path resources\bin
-          $ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue
-          if ($ffmpeg) { Copy-Item $ffmpeg.Source resources\bin\ }
+          mkdir -p resources/bin
+
+          # Download ffmpeg static build for Windows
+          curl -sL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -o /tmp/ffmpeg.zip
+          unzip -q /tmp/ffmpeg.zip -d /tmp/ffmpeg
+          cp /tmp/ffmpeg/ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe resources/bin/ 2>/dev/null || true
+          echo "ffmpeg: $(ls -lh resources/bin/ffmpeg.exe 2>/dev/null | awk '{print $5}')"
+
+          # Download vgmstream-cli for Windows
+          curl -sL "https://github.com/vgmstream/vgmstream/releases/latest/download/vgmstream-win64.zip" -o /tmp/vgmstream.zip
+          unzip -q /tmp/vgmstream.zip -d /tmp/vgmstream
+          cp /tmp/vgmstream/vgmstream-cli.exe resources/bin/ 2>/dev/null || true
+          # Copy required DLLs
+          cp /tmp/vgmstream/*.dll resources/bin/ 2>/dev/null || true
+          echo "vgmstream: $(ls -lh resources/bin/vgmstream-cli.exe 2>/dev/null | awk '{print $5}')"
         if: matrix.platform == 'win'
 
       # ── Package ─────────────────────────────────────────────────────────
