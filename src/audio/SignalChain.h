@@ -38,6 +38,7 @@ public:
     void removeProcessor(int slotId);
     void moveProcessor(int fromIndex, int toIndex);
     void setBypass(int slotId, bool bypassed);
+    void setMultiBypass(const juce::Array<std::pair<int, bool>>& changes);
     void clear();
 
     // Info

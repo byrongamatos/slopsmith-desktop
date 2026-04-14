@@ -112,6 +112,16 @@ void SignalChain::setBypass(int slotId, bool bypassed)
     if (idx >= 0) slots[idx]->bypassed = bypassed;
 }
 
+void SignalChain::setMultiBypass(const juce::Array<std::pair<int, bool>>& changes)
+{
+    const juce::ScopedLock sl(lock);
+    for (auto& [slotId, bypassed] : changes)
+    {
+        int idx = findSlotIndex(slotId);
+        if (idx >= 0) slots[idx]->bypassed = bypassed;
+    }
+}
+
 void SignalChain::clear()
 {
     const juce::ScopedLock sl(lock);

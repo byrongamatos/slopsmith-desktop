@@ -54,7 +54,7 @@ function createWindow(port: number): void {
     mainWindow.webContents.on('did-finish-load', () => {
         mainWindow?.webContents.executeJavaScript(`
             window._slopsmithSyncOffset = parseFloat(localStorage.getItem('slopsmith-sync-offset') || '0.2');
-        `);
+        `).catch(() => {});
     });
 
     // Open external links in system browser

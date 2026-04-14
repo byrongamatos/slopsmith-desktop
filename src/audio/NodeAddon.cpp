@@ -776,6 +776,163 @@ static Napi::Value SavePreset(const Napi::CallbackInfo& info)
     return Napi::String::New(env, json.toStdString());
 }
 
+class LoadPresetWorker : public Napi::AsyncWorker
+{
+public:
+    LoadPresetWorker(Napi::Env env, Napi::Promise::Deferred deferred, std::string json)
+        : Napi::AsyncWorker(env), deferred_(deferred), presetJson_(std::move(json)) {}
+
+    void Execute() override
+    {
+        if (!engine) { success_ = false; error_ = "No engine"; return; }
+
+        auto parsed = juce::JSON::parse(juce::String(presetJson_));
+        if (!parsed.isObject()) { success_ = false; error_ = "Invalid JSON"; return; }
+
+        auto* root = parsed.getDynamicObject();
+        if (!root) { success_ = false; error_ = "Invalid preset"; return; }
+
+        auto chainVar = root->getProperty("chain");
+        auto* chainArray = chainVar.getArray();
+        if (!chainArray) { success_ = false; error_ = "No chain array"; return; }
+
+        // Clear existing chain
+        engine->getSignalChain().clear();
+
+        double sr = engine->getCurrentSampleRate();
+        int bs = engine->getCurrentBlockSize();
+
+        for (auto& slotVar : *chainArray)
+        {
+            auto* slotObj = slotVar.getDynamicObject();
+            if (!slotObj) continue;
+
+            int type = (int)slotObj->getProperty("type");
+            auto name = slotObj->getProperty("name").toString();
+            auto path = slotObj->getProperty("path").toString();
+            bool bypassed = (bool)slotObj->getProperty("bypassed");
+            auto stateB64 = slotObj->getProperty("state").toString();
+
+            std::unique_ptr<juce::AudioProcessor> processor;
+
+            if (type == (int)ProcessorSlot::Type::VST && vstHost)
+            {
+                juce::String err;
+                processor = vstHost->loadPlugin(path, sr, bs, err);
+                if (!processor)
+                {
+                    fprintf(stderr, "[LoadPreset] VST load failed: %s (%s)\n",
+                            name.toRawUTF8(), err.toRawUTF8());
+                    continue;
+                }
+            }
+            else if (type == (int)ProcessorSlot::Type::NAM)
+            {
+                auto nam = std::make_unique<NAMProcessor>();
+                if (!nam->loadModel(juce::File(path)))
+                {
+                    fprintf(stderr, "[LoadPreset] NAM load failed: %s\n", path.toRawUTF8());
+                    continue;
+                }
+                processor = std::move(nam);
+            }
+            else if (type == (int)ProcessorSlot::Type::IR)
+            {
+                auto ir = std::make_unique<IRLoader>();
+                ir->setPlayConfigDetails(2, 2, sr, bs);
+                ir->prepareToPlay(sr, bs);
+                if (!ir->loadIR(juce::File(path)))
+                {
+                    fprintf(stderr, "[LoadPreset] IR load failed: %s\n", path.toRawUTF8());
+                    continue;
+                }
+                processor = std::move(ir);
+            }
+            else continue;
+
+            int slotId = engine->getSignalChain().addProcessor(
+                std::move(processor),
+                (ProcessorSlot::Type)type,
+                name, path);
+
+            if (bypassed && slotId >= 0)
+                engine->getSignalChain().setBypass(slotId, true);
+
+            // Restore processor state
+            if (stateB64.isNotEmpty() && slotId >= 0)
+            {
+                juce::MemoryBlock state;
+                if (state.fromBase64Encoding(stateB64))
+                {
+                    auto* slot = const_cast<ProcessorSlot*>(engine->getSignalChain().getSlot(slotId));
+                    if (slot) slot->setState(state);
+                }
+            }
+
+            slotsLoaded_++;
+        }
+
+        success_ = true;
+    }
+
+    void OnOK() override
+    {
+        auto obj = Napi::Object::New(Env());
+        obj.Set("success", success_);
+        obj.Set("slotsLoaded", slotsLoaded_);
+        if (!success_) obj.Set("error", error_);
+        deferred_.Resolve(obj);
+    }
+    void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
+
+private:
+    Napi::Promise::Deferred deferred_;
+    std::string presetJson_;
+    bool success_ = false;
+    std::string error_;
+    int slotsLoaded_ = 0;
+};
+
+static Napi::Value LoadPreset(const Napi::CallbackInfo& info)
+{
+    auto env = info.Env();
+    auto deferred = Napi::Promise::Deferred::New(env);
+
+    if (!engine || info.Length() < 1) {
+        auto obj = Napi::Object::New(env);
+        obj.Set("success", false);
+        obj.Set("error", "No engine or missing argument");
+        deferred.Resolve(obj);
+        return deferred.Promise();
+    }
+
+    auto json = info[0].As<Napi::String>().Utf8Value();
+    auto worker = new LoadPresetWorker(env, deferred, json);
+    worker->Queue();
+    return deferred.Promise();
+}
+
+static Napi::Value SetMultiBypass(const Napi::CallbackInfo& info)
+{
+    auto env = info.Env();
+    if (!engine || info.Length() < 1 || !info[0].IsArray())
+        return Napi::Boolean::New(env, false);
+
+    auto arr = info[0].As<Napi::Array>();
+    juce::Array<std::pair<int, bool>> changes;
+
+    for (uint32_t i = 0; i < arr.Length(); i++)
+    {
+        auto item = arr.Get(i).As<Napi::Object>();
+        int slotId = item.Get("slotId").As<Napi::Number>().Int32Value();
+        bool bypassed = item.Get("bypassed").As<Napi::Boolean>().Value();
+        changes.add({ slotId, bypassed });
+    }
+
+    engine->getSignalChain().setMultiBypass(changes);
+    return Napi::Boolean::New(env, true);
+}
+
 // ── Module Registration ───────────────────────────────────────────────────────
 
 static Napi::Object InitModule(Napi::Env env, Napi::Object exports)
@@ -840,6 +997,8 @@ static Napi::Object InitModule(Napi::Env env, Napi::Object exports)
 
     // Presets
     exports.Set("savePreset", Napi::Function::New(env, SavePreset));
+    exports.Set("loadPreset", Napi::Function::New(env, LoadPreset));
+    exports.Set("setMultiBypass", Napi::Function::New(env, SetMultiBypass));
 
     return exports;
 }

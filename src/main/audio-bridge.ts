@@ -220,6 +220,14 @@ export function initAudioBridge(mainWindow: BrowserWindow | null): void {
     ipcMain.handle('audio:savePreset', () => {
         return audio?.savePreset() ?? null;
     });
+
+    ipcMain.handle('audio:loadPreset', async (_event, presetJson: string) => {
+        return await audio?.loadPreset(presetJson) ?? { success: false, error: 'No audio' };
+    });
+
+    ipcMain.handle('audio:setMultiBypass', (_event, changes: Array<{slotId: number, bypassed: boolean}>) => {
+        return audio?.setMultiBypass(changes) ?? false;
+    });
 }
 
 export function shutdownAudio(): void {

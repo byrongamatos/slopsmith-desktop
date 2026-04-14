@@ -76,6 +76,11 @@ contextBridge.exposeInMainWorld('slopsmithDesktop', {
 
         // Presets
         savePreset: () => ipcRenderer.invoke('audio:savePreset'),
+        loadPreset: (presetJson: string) => ipcRenderer.invoke('audio:loadPreset', presetJson),
+
+        // Tone switching
+        setMultiBypass: (changes: Array<{slotId: number, bypassed: boolean}>) =>
+            ipcRenderer.invoke('audio:setMultiBypass', changes),
     },
 
     // Plugin management
