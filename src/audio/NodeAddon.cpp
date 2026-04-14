@@ -610,11 +610,92 @@ static Napi::Value GetChainState(const Napi::CallbackInfo& info)
             obj.Set("name", slots[i]->name.toStdString());
             obj.Set("path", slots[i]->path.toStdString());
             obj.Set("bypassed", slots[i]->bypassed);
+            obj.Set("hasEditor", slots[i]->processor && slots[i]->processor->hasEditor());
             result.Set((uint32_t)i, obj);
         }
     }
 
     return result;
+}
+
+// ── Plugin Editor Window ──────────────────────────────────────────────────────
+
+class PluginEditorWindow : public juce::DocumentWindow
+{
+public:
+    PluginEditorWindow(juce::AudioProcessorEditor* ed, const juce::String& title)
+        : DocumentWindow(title, juce::Colours::darkgrey, DocumentWindow::closeButton)
+    {
+        setContentOwned(ed, true);
+        setResizable(true, false);
+        setUsingNativeTitleBar(true);
+        centreWithSize(ed->getWidth(), ed->getHeight());
+        setVisible(true);
+        toFront(true);
+    }
+
+    void closeButtonPressed() override
+    {
+        setVisible(false);
+    }
+};
+
+static std::map<int, std::unique_ptr<PluginEditorWindow>> editorWindows;
+
+static Napi::Value OpenPluginEditor(const Napi::CallbackInfo& info)
+{
+    auto env = info.Env();
+    if (!engine || info.Length() < 1)
+        return Napi::Boolean::New(env, false);
+
+    int slotId = info[0].As<Napi::Number>().Int32Value();
+
+    // If already open, bring to front
+    auto it = editorWindows.find(slotId);
+    if (it != editorWindows.end() && it->second && it->second->isVisible())
+    {
+        it->second->toFront(true);
+        return Napi::Boolean::New(env, true);
+    }
+
+    auto slot = engine->getSignalChain().getSlot(slotId);
+    if (!slot || !slot->processor || !slot->processor->hasEditor())
+        return Napi::Boolean::New(env, false);
+
+    // Create editor on the message thread
+    auto* processor = slot->processor.get();
+    auto name = slot->name;
+
+    juce::MessageManager::callAsync([processor, name, slotId]()
+    {
+        auto* editor = processor->createEditor();
+        if (editor)
+        {
+            editorWindows[slotId] = std::make_unique<PluginEditorWindow>(editor, name);
+            fprintf(stderr, "[AudioEngine] Opened editor for slot %d: %s (%dx%d)\n",
+                    slotId, name.toRawUTF8(), editor->getWidth(), editor->getHeight());
+        }
+    });
+
+    return Napi::Boolean::New(env, true);
+}
+
+static Napi::Value ClosePluginEditor(const Napi::CallbackInfo& info)
+{
+    auto env = info.Env();
+    if (info.Length() < 1) return Napi::Boolean::New(env, false);
+
+    int slotId = info[0].As<Napi::Number>().Int32Value();
+    auto it = editorWindows.find(slotId);
+    if (it != editorWindows.end())
+    {
+        juce::MessageManager::callAsync([slotId]()
+        {
+            editorWindows.erase(slotId);
+        });
+        return Napi::Boolean::New(env, true);
+    }
+    return Napi::Boolean::New(env, false);
 }
 
 // ── Parameters ────────────────────────────────────────────────────────────────
@@ -744,6 +825,8 @@ static Napi::Object InitModule(Napi::Env env, Napi::Object exports)
     exports.Set("setBypass", Napi::Function::New(env, SetBypass));
     exports.Set("clearChain", Napi::Function::New(env, ClearChain));
     exports.Set("getChainState", Napi::Function::New(env, GetChainState));
+    exports.Set("openPluginEditor", Napi::Function::New(env, OpenPluginEditor));
+    exports.Set("closePluginEditor", Napi::Function::New(env, ClosePluginEditor));
 
     // Parameters
     exports.Set("getParameters", Napi::Function::New(env, GetParameters));

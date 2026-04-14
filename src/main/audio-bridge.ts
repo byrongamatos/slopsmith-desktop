@@ -185,6 +185,16 @@ export function initAudioBridge(mainWindow: BrowserWindow | null): void {
         return audio?.getChainState() ?? [];
     });
 
+    // ── Plugin Editor ──────────────────────────────────────────────────────
+
+    ipcMain.handle('audio:openPluginEditor', (_event, slotId: number) => {
+        return audio?.openPluginEditor(slotId) ?? false;
+    });
+
+    ipcMain.handle('audio:closePluginEditor', (_event, slotId: number) => {
+        return audio?.closePluginEditor(slotId) ?? false;
+    });
+
     // ── Parameters ─────────────────────────────────────────────────────────
 
     ipcMain.handle('audio:getParameters', (_event, slotId: number) => {

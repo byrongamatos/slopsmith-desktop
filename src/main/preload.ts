@@ -59,6 +59,10 @@ contextBridge.exposeInMainWorld('slopsmithDesktop', {
         clearChain: () => ipcRenderer.invoke('audio:clearChain'),
         getChainState: () => ipcRenderer.invoke('audio:getChainState'),
 
+        // Plugin editor
+        openPluginEditor: (slotId: number) => ipcRenderer.invoke('audio:openPluginEditor', slotId),
+        closePluginEditor: (slotId: number) => ipcRenderer.invoke('audio:closePluginEditor', slotId),
+
         // Parameters
         getParameters: (slotId: number) => ipcRenderer.invoke('audio:getParameters', slotId),
         setParameter: (slotId: number, paramIndex: number, value: number) =>

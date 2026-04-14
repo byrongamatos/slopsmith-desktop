@@ -219,6 +219,8 @@
                     ${typeNames[slot.type] || '?'}
                 </span>
                 <span class="flex-1 text-sm ${slot.bypassed ? 'line-through text-slate-500' : 'text-slate-200'}">${slot.name}</span>
+                ${slot.hasEditor ? `<button class="text-xs px-2 py-1 rounded bg-blue-600/50 hover:bg-blue-500"
+                        onclick="_aeOpenEditor(${slot.id})">Edit</button>` : ''}
                 <button class="text-xs px-2 py-1 rounded ${slot.bypassed ? 'bg-yellow-600' : 'bg-slate-600'} hover:opacity-80"
                         onclick="_aeToggleBypass(${slot.id}, ${!slot.bypassed})">
                     ${slot.bypassed ? 'Enable' : 'Bypass'}
@@ -237,8 +239,13 @@
     };
 
     window._aeRemoveSlot = async (slotId) => {
+        await api.closePluginEditor(slotId);
         await api.removeProcessor(slotId);
         await refreshChain();
+    };
+
+    window._aeOpenEditor = async (slotId) => {
+        await api.openPluginEditor(slotId);
     };
 
     // ── VST Browser ───────────────────────────────────────────────────────────
