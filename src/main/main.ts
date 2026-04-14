@@ -39,14 +39,18 @@ function createWindow(port: number): void {
     });
 
     const serverUrl = `http://127.0.0.1:${port}`;
-    mainWindow.loadURL(serverUrl);
 
-    // Retry loading if server wasn't ready yet
+    // Small delay to ensure server is fully accepting connections, then load
+    setTimeout(() => mainWindow?.loadURL(serverUrl), 500);
+
+    // Retry loading if server wasn't ready yet (single retry to avoid double-load issues)
+    let retried = false;
     mainWindow.webContents.on('did-fail-load', (_event, errorCode, _errorDesc) => {
-        if (errorCode === -102 /* ERR_CONNECTION_REFUSED */ || errorCode === -6 /* ERR_CONNECTION_RESET */) {
+        if (!retried && (errorCode === -102 || errorCode === -6)) {
+            retried = true;
             setTimeout(() => {
                 mainWindow?.loadURL(serverUrl);
-            }, 1000);
+            }, 1500);
         }
     });
 

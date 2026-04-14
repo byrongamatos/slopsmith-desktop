@@ -144,7 +144,7 @@
     }
 
     function saveChainState() {
-        api.getChain().then(chain => {
+        api.getChainState().then(chain => {
             const typeMap = { 0: 'VST', 1: 'NAM', 2: 'IR' };
             const items = chain.filter(s => s.type === 0 || s.type === 1 || s.type === 2).map(s => ({
                 type: typeMap[s.type] || 'VST',
@@ -511,6 +511,10 @@
                 localStorage.setItem('slopsmith-chain-presets', JSON.stringify(presets));
                 wrapper.remove();
                 renderPresetList();
+                renderToneMappingUI();
+                // Refresh floating panel if open
+                const floatPanel = document.getElementById('ae-tone-panel-float');
+                if (floatPanel) { floatPanel.remove(); toggleTonePanel(); }
             };
 
             saveBtn.addEventListener('click', doSave);
@@ -1004,7 +1008,72 @@
             else controls.appendChild(btn);
         }, 500);
 
-        // Start tone monitoring after WebSocket has time to deliver tone data
-        setTimeout(() => startToneAutoSwitch(), 3000);
+        // Start tone monitoring and preload presets after WebSocket delivers tone data
+        setTimeout(async () => {
+            startToneAutoSwitch();
+
+            // Preload presets for tone switching
+            const autoOn = localStorage.getItem('slopsmith-tone-auto-switch') === 'true';
+            const api = window.slopsmithDesktop?.audio;
+            const hw = window.highway;
+            if (!autoOn || !api || !hw) return;
+
+            const toneChanges = hw.getToneChanges ? hw.getToneChanges() : [];
+            const toneBase = hw.getToneBase ? hw.getToneBase() : '';
+            if (toneChanges.length === 0) return;
+
+            const songKey = document.title || '';
+            const allMappings = JSON.parse(localStorage.getItem('slopsmith-tone-mappings') || '{"global":{},"songs":{}}');
+            const mappings = { ...allMappings.global, ...(allMappings.songs[songKey] || {}) };
+            if (Object.keys(mappings).length === 0) return;
+
+            const presets = JSON.parse(localStorage.getItem('slopsmith-chain-presets') || '{}');
+
+            // Get all unique tone names
+            const toneNames = new Set([toneBase]);
+            for (const tc of toneChanges) toneNames.add(tc.name);
+
+            // Clear chain and preload all mapped presets
+            await api.clearChain();
+            const toneSlotMap = {};
+
+            for (const toneName of toneNames) {
+                const presetName = mappings[toneName] || mappings['$default'];
+                if (!presetName || !presets[presetName]) continue;
+
+                const slotIds = [];
+                for (const item of presets[presetName].items) {
+                    let slotId = -1;
+                    if (item.type === 'NAM' && item.path) slotId = await api.loadNAMModel(item.path);
+                    else if (item.type === 'IR' && item.path) slotId = await api.loadIR(item.path);
+                    else if (item.type === 'VST' && item.path) slotId = await api.loadVST(item.path);
+                    if (slotId >= 0) slotIds.push(slotId);
+                }
+                toneSlotMap[toneName] = slotIds;
+
+                // Bypass all except initial tone
+                if (toneName !== toneBase && slotIds.length > 0) {
+                    await api.setMultiBypass(slotIds.map(id => ({ slotId: id, bypassed: true })));
+                }
+            }
+
+            // Create a simple switcher object
+            window._toneSwitcher = {
+                activeTone: toneBase,
+                toneSlotMap,
+                switchToTone(name) {
+                    if (name === this.activeTone || !this.toneSlotMap[name]) return;
+                    const changes = [];
+                    if (this.activeTone && this.toneSlotMap[this.activeTone]) {
+                        for (const id of this.toneSlotMap[this.activeTone]) changes.push({ slotId: id, bypassed: true });
+                    }
+                    for (const id of this.toneSlotMap[name]) changes.push({ slotId: id, bypassed: false });
+                    if (changes.length > 0) api.setMultiBypass(changes);
+                    this.activeTone = name;
+                    console.log('[tone-switcher] Switched to:', name);
+                }
+            };
+            console.log('[tone-switcher] Preloaded:', Object.keys(toneSlotMap));
+        }, 3000);
     };
 })();
