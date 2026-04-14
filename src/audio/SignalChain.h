@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
+#include <array>
 
 // Represents a single processor slot in the signal chain.
 // Can hold a VST3/AU/LV2 plugin, NAM model, or IR loader.
@@ -62,6 +63,9 @@ public:
     juce::String savePreset() const;
     void loadPreset(const juce::String& json);
 
+    // MIDI message injection (lock-free, called from N-API thread)
+    void queueMidiMessage(int targetSlotId, const juce::MidiMessage& msg);
+
 private:
     int findSlotIndex(int slotId) const;
 
@@ -71,6 +75,12 @@ private:
 
     double currentSampleRate = 48000.0;
     int currentBlockSize = 256;
+
+    // Lock-free SPSC MIDI queue (N-API thread writes, audio thread reads)
+    struct PendingMidiMessage { int targetSlotId = -1; juce::MidiMessage msg; };
+    static constexpr int kMidiQueueSize = 64;
+    std::array<PendingMidiMessage, kMidiQueueSize> midiRingBuffer;
+    juce::AbstractFifo midiQueueFifo { kMidiQueueSize };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SignalChain)
 };

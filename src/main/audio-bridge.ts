@@ -153,8 +153,8 @@ export function initAudioBridge(mainWindow: BrowserWindow | null): void {
 
     // ── Signal Chain ───────────────────────────────────────────────────────
 
-    ipcMain.handle('audio:loadVST', (_event, pluginPath: string) => {
-        return audio?.loadVST(pluginPath) ?? -1;
+    ipcMain.handle('audio:loadVST', async (_event, pluginPath: string) => {
+        return await audio?.loadVST(pluginPath) ?? -1;
     });
 
     ipcMain.handle('audio:loadNAMModel', async (_event, modelPath: string) => {
@@ -203,6 +203,12 @@ export function initAudioBridge(mainWindow: BrowserWindow | null): void {
 
     ipcMain.handle('audio:setParameter', (_event, slotId: number, paramIndex: number, value: number) => {
         audio?.setParameter(slotId, paramIndex, value);
+    });
+
+    // ── MIDI ───────────────────────────────────────────────────────────────
+
+    ipcMain.handle('audio:sendMidiToSlot', (_event, slotId: number, msgType: number, channel: number, param1: number, param2?: number) => {
+        return audio?.sendMidiToSlot(slotId, msgType, channel, param1, param2 ?? 0) ?? false;
     });
 
     // ── Backing Track ──────────────────────────────────────────────────────

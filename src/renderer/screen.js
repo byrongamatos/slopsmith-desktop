@@ -715,6 +715,18 @@
         localStorage.setItem('slopsmith-tone-mappings', JSON.stringify(all));
     }
 
+    function getMidiPCConfig(songKey) {
+        const all = JSON.parse(localStorage.getItem('slopsmith-tone-mappings') || '{}');
+        return all.midiPC?.[songKey] || null;
+    }
+
+    function saveMidiPCConfig(songKey, config) {
+        const all = JSON.parse(localStorage.getItem('slopsmith-tone-mappings') || '{}');
+        if (!all.midiPC) all.midiPC = {};
+        all.midiPC[songKey] = config;
+        localStorage.setItem('slopsmith-tone-mappings', JSON.stringify(all));
+    }
+
     function renderToneMappingUI() {
         const container = $('ae-tone-mappings');
         const section = $('ae-tone-switching');
@@ -734,7 +746,7 @@
 
         const presets = getPresets();
         const presetNames = Object.keys(presets);
-        const songKey = document.title || '';
+        const songKey = window._currentSongFile || document.title || '';
         const mappings = getToneMappings(songKey);
 
         container.innerHTML = '';
@@ -799,29 +811,51 @@
     }
 
     window._toggleChainPanel = toggleTonePanel;
-    function toggleTonePanel() {
+    async function toggleTonePanel() {
         let panel = document.getElementById('ae-tone-panel-float');
         if (panel) { panel.remove(); return; }
 
         const player = document.getElementById('player');
         if (!player) return;
 
+        // Show panel immediately with loading state
         panel = document.createElement('div');
         panel.id = 'ae-tone-panel-float';
         panel.style.cssText = 'position:absolute;bottom:60px;right:12px;z-index:100;width:320px;max-height:400px;overflow-y:auto;';
         panel.className = 'bg-slate-900 border border-slate-700 rounded-xl p-4 shadow-2xl';
+        panel.innerHTML = `<div class="flex items-center justify-between mb-3">
+            <span class="text-sm font-semibold text-slate-200">Tone Switching</span>
+            <button onclick="document.getElementById('ae-tone-panel-float').remove()" class="text-slate-500 hover:text-white text-lg leading-none">&times;</button>
+        </div><div class="text-xs text-slate-400 animate-pulse">Loading...</div>`;
+        player.style.position = 'relative';
+        player.appendChild(panel);
 
         const hw = window.highway || window._slopsmithHighway;
         const toneChanges = hw?.getToneChanges ? hw.getToneChanges() : [];
         const toneBase = hw?.getToneBase ? hw.getToneBase() : '';
         const presets = getPresets();
         const presetNames = Object.keys(presets);
-        const songKey = document.title || '';
+        const songKey = window._currentSongFile || document.title || '';
         const mappings = getToneMappings(songKey);
+        const midiConfig = getMidiPCConfig(songKey);
+        const isMidiMode = midiConfig?.mode === 'midi';
 
         const toneNames = new Set();
         if (toneBase) toneNames.add(toneBase);
         for (const tc of toneChanges) toneNames.add(tc.name);
+
+        // Get VST slots for MIDI mode dropdown (this is the slow part)
+        const apiLocal = window.slopsmithDesktop?.audio;
+        let vstSlots = [];
+        if (apiLocal) {
+            try {
+                const chain = await apiLocal.getChainState();
+                vstSlots = chain.filter(s => s.type === 0);
+            } catch(e) {}
+        }
+
+        // Check if panel was closed while loading
+        if (!document.getElementById('ae-tone-panel-float')) return;
 
         let html = `<div class="flex items-center justify-between mb-3">
             <span class="text-sm font-semibold text-slate-200">Tone Switching</span>
@@ -831,6 +865,17 @@
         if (toneNames.size === 0) {
             html += '<div class="text-xs text-slate-500 italic">No tone changes in this song</div>';
         } else {
+            // Mode selector
+            html += `<div class="flex items-center gap-2 mb-3">
+                <label class="text-xs text-slate-400">Mode:</label>
+                <select id="ae-tone-mode" class="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-300">
+                    <option value="bypass" ${!isMidiMode ? 'selected' : ''}>Preset Switch</option>
+                    <option value="midi" ${isMidiMode ? 'selected' : ''}>MIDI Program Change</option>
+                </select>
+            </div>`;
+
+            // Bypass mode (existing)
+            html += `<div id="ae-bypass-mode" class="${isMidiMode ? 'hidden' : ''}">`;
             html += '<div class="space-y-2 mb-3">';
             for (const tone of toneNames) {
                 if (!tone) continue;
@@ -842,10 +887,42 @@
                     </select>
                 </div>`;
             }
+            html += '</div></div>';
+
+            // MIDI PC mode (new)
+            const midiMappings = midiConfig?.mappings || {};
+            html += `<div id="ae-midi-mode" class="${!isMidiMode ? 'hidden' : ''}">`;
+            if (vstSlots.length === 0) {
+                html += '<div class="text-xs text-slate-500 italic mb-2">No VST plugins loaded. Load a VST first.</div>';
+            } else {
+                html += `<div class="space-y-2 mb-3">
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-slate-400 w-20">VST:</span>
+                        <select id="ae-midi-vst" class="flex-1 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-300">
+                            ${vstSlots.map(s => `<option value="${s.id}" ${midiConfig?.vstSlotId === s.id ? 'selected' : ''}>${s.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-slate-400 w-20">Channel:</span>
+                        <input type="number" id="ae-midi-ch" min="1" max="16" value="${midiConfig?.channel || 1}" class="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-300">
+                    </div>
+                </div>`;
+                html += '<div class="space-y-1 mb-3">';
+                for (const tone of toneNames) {
+                    if (!tone) continue;
+                    html += `<div class="flex items-center gap-2">
+                        <span class="text-xs text-slate-400 w-24 truncate" title="${tone}">${tone}</span>
+                        <input type="number" min="0" max="127" value="${midiMappings[tone] ?? ''}" placeholder="PC#"
+                            data-midi-tone="${tone}" class="w-16 bg-slate-700 border border-slate-600 rounded px-2 py-1 text-xs text-slate-300">
+                    </div>`;
+                }
+                html += '</div>';
+                html += `<button id="ae-midi-save" class="px-3 py-1.5 rounded bg-emerald-600/50 hover:bg-emerald-500 text-xs text-slate-200">Save MIDI Mapping</button>`;
+            }
             html += '</div>';
         }
 
-        html += `<label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer mb-2">
+        html += `<label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer mb-2 mt-2">
             <input type="checkbox" class="accent-blue-500" id="ae-float-auto-switch" ${autoSwitchEnabled ? 'checked' : ''}>
             Auto-switch during playback
         </label>`;
@@ -864,6 +941,66 @@
                 saveToneMappings(songKey, m);
             });
         });
+
+        // Wire mode toggle
+        const modeSelect = panel.querySelector('#ae-tone-mode');
+        if (modeSelect) {
+            modeSelect.addEventListener('change', () => {
+                const bypassDiv = panel.querySelector('#ae-bypass-mode');
+                const midiDiv = panel.querySelector('#ae-midi-mode');
+                if (modeSelect.value === 'midi') {
+                    bypassDiv?.classList.add('hidden');
+                    midiDiv?.classList.remove('hidden');
+                } else {
+                    bypassDiv?.classList.remove('hidden');
+                    midiDiv?.classList.add('hidden');
+                    // Clear MIDI config when switching to bypass mode
+                    saveMidiPCConfig(songKey, null);
+                }
+            });
+        }
+
+        // Wire MIDI save button
+        const midiSaveBtn = panel.querySelector('#ae-midi-save');
+        if (midiSaveBtn) {
+            midiSaveBtn.addEventListener('click', () => {
+                const vstSelect = panel.querySelector('#ae-midi-vst');
+                const chInput = panel.querySelector('#ae-midi-ch');
+                const midiInputs = panel.querySelectorAll('[data-midi-tone]');
+                const mappingsObj = {};
+                midiInputs.forEach(inp => {
+                    if (inp.value !== '') mappingsObj[inp.dataset.midiTone] = parseInt(inp.value);
+                });
+                saveMidiPCConfig(songKey, {
+                    mode: 'midi',
+                    vstSlotId: vstSelect ? parseInt(vstSelect.value) : -1,
+                    channel: chInput ? parseInt(chInput.value) : 1,
+                    mappings: mappingsObj,
+                });
+                // Apply MIDI mode immediately
+                window._preloadedSongKey = null;
+                const _liveApi = window.slopsmithDesktop?.audio;
+                const _midiMappings = mappingsObj;
+                const _midiVstSlot = vstSelect ? parseInt(vstSelect.value) : -1;
+                const _midiCh = chInput ? parseInt(chInput.value) : 1;
+                window._toneSwitcher = {
+                    activeTone: null,
+                    midiMode: true,
+                    switchToTone(name) {
+                        if (name === this.activeTone) return;
+                        const program = _midiMappings[name];
+                        if (program !== undefined && _liveApi?.sendMidiToSlot) {
+                            _liveApi.sendMidiToSlot(_midiVstSlot, 0, _midiCh, program);
+                            console.log('[tone-switcher] MIDI PC:', name, '-> program', program);
+                        }
+                        this.activeTone = name;
+                    }
+                };
+                console.log('[tone-switcher] Saved & activated MIDI config:', mappingsObj);
+                midiSaveBtn.textContent = 'Saved!';
+                setTimeout(() => { midiSaveBtn.textContent = 'Save MIDI Mapping'; }, 1500);
+            });
+        }
 
         // Wire auto-switch checkbox
         const cb = panel.querySelector('#ae-float-auto-switch');
@@ -897,19 +1034,26 @@
             setTimeout(() => {
                 renderToneMappingUI();
                 if (autoSwitchEnabled) {
-                    const hw = window.highway || window._slopsmithHighway;
-                    if (!hw) return;
-                    const toneChanges = hw.getToneChanges ? hw.getToneChanges() : [];
-                    const toneBase = hw.getToneBase ? hw.getToneBase() : '';
-                    if (toneChanges.length > 0) {
-                        const songKey = document.title || '';
-                        const mappings = getToneMappings(songKey);
-                        if (Object.keys(mappings).length > 0) {
-                            toneSwitcher = new ToneSwitcher();
-                            window._toneSwitcher = toneSwitcher;
-                            toneSwitcher.preloadForSong(toneChanges, toneBase, mappings)
-                                .then(() => startToneMonitor())
-                                .catch(e => console.error('[tone-switcher] Preload error:', e));
+                    // Skip inner IIFE preload if MIDI mode is active (outer IIFE handles it)
+                    const songKey = window._currentSongFile || document.title || '';
+                    const allData = JSON.parse(localStorage.getItem('slopsmith-tone-mappings') || '{}');
+                    const midiCfg = allData.midiPC?.[songKey];
+                    if (midiCfg?.mode === 'midi') {
+                        console.log('[tone-switcher] MIDI mode active, skipping bypass preload');
+                    } else {
+                        const hw = window.highway || window._slopsmithHighway;
+                        if (!hw) return;
+                        const toneChanges = hw.getToneChanges ? hw.getToneChanges() : [];
+                        const toneBase = hw.getToneBase ? hw.getToneBase() : '';
+                        if (toneChanges.length > 0) {
+                            const mappings = getToneMappings(songKey);
+                            if (Object.keys(mappings).length > 0) {
+                                toneSwitcher = new ToneSwitcher();
+                                window._toneSwitcher = toneSwitcher;
+                                toneSwitcher.preloadForSong(toneChanges, toneBase, mappings)
+                                    .then(() => startToneMonitor())
+                                    .catch(e => console.error('[tone-switcher] Preload error:', e));
+                            }
                         }
                     }
                 }
@@ -984,6 +1128,8 @@
                 // Trigger preset switch if ToneSwitcher is available
                 if (window._toneSwitcher) {
                     window._toneSwitcher.switchToTone(activeTone);
+                } else {
+                    console.log('[tone-switcher] WARNING: _toneSwitcher is null at switch time');
                 }
             }
         }, 50);
@@ -992,9 +1138,9 @@
     window.playSong = async function(filename, arrangement) {
         if (_toneMonitor) { clearInterval(_toneMonitor); _toneMonitor = null; }
         _lastTone = null;
-        // Reset preload tracking for new song (different filename = new song)
-        const newSongKey = decodeURIComponent(filename);
-        if (_preloadedSongKey && !_preloadedSongKey.includes(newSongKey.split('_p.')[0])) {
+        window._currentSongFile = decodeURIComponent(filename);
+        // Reset preload tracking for new song
+        if (_preloadedSongKey && _preloadedSongKey !== window._currentSongFile) {
             _preloadedSongKey = null;
             window._toneSwitcher = null;
         }
@@ -1029,68 +1175,104 @@
             const toneBase = hw.getToneBase ? hw.getToneBase() : '';
             if (toneChanges.length === 0) return;
 
-            const songKey = document.title || '';
+            const songKey = window._currentSongFile || document.title || '';
 
-            // Skip if already preloaded for this song
+            // Check for MIDI PC mode
+            const allMappingsData = JSON.parse(localStorage.getItem('slopsmith-tone-mappings') || '{}');
+            const midiConfig = allMappingsData.midiPC?.[songKey];
+            const wantsMidi = midiConfig?.mode === 'midi';
+
+            // Check if MIDI config was just saved (clears window._preloadedSongKey)
+            if (window._preloadedSongKey === null) _preloadedSongKey = null;
+
+            // Skip if already preloaded for this song with the same mode
             if (_preloadedSongKey === songKey && window._toneSwitcher) {
-                // Just reset to initial tone
-                window._toneSwitcher.switchToTone(toneBase);
-                return;
+                const currentIsMidi = !!window._toneSwitcher.midiMode;
+                if (currentIsMidi === wantsMidi) {
+                    window._toneSwitcher.switchToTone(toneBase);
+                    return;
+                }
+                // Mode changed — reset and re-preload
+                _preloadedSongKey = null;
+                window._toneSwitcher = null;
             }
 
-            const allMappings = JSON.parse(localStorage.getItem('slopsmith-tone-mappings') || '{"global":{},"songs":{}}');
-            const mappings = { ...allMappings.global, ...(allMappings.songs[songKey] || {}) };
-            if (Object.keys(mappings).length === 0) return;
+            console.log('[tone-switcher] Mode:', wantsMidi ? 'MIDI' : 'bypass', 'config:', JSON.stringify(midiConfig));
 
-            const presets = JSON.parse(localStorage.getItem('slopsmith-chain-presets') || '{}');
-
-            // Get all unique tone names
-            const toneNames = new Set([toneBase]);
-            for (const tc of toneChanges) toneNames.add(tc.name);
-
-            // Clear chain before preloading new tone processors
-            await api.clearChain();
-            window._toneSwitcher = null;
-            const toneSlotMap = {};
-
-            for (const toneName of toneNames) {
-                const presetName = mappings[toneName] || mappings['$default'];
-                if (!presetName || !presets[presetName]) continue;
-
-                const slotIds = [];
-                for (const item of presets[presetName].items) {
-                    let slotId = -1;
-                    if (item.type === 'NAM' && item.path) slotId = await api.loadNAMModel(item.path);
-                    else if (item.type === 'IR' && item.path) slotId = await api.loadIR(item.path);
-                    else if (item.type === 'VST' && item.path) slotId = await api.loadVST(item.path);
-                    if (slotId >= 0) slotIds.push(slotId);
-                }
-                toneSlotMap[toneName] = slotIds;
-
-                // Bypass all except initial tone
-                if (toneName !== toneBase && slotIds.length > 0) {
-                    await api.setMultiBypass(slotIds.map(id => ({ slotId: id, bypassed: true })));
-                }
-            }
-
-            // Create a simple switcher object
-            window._toneSwitcher = {
-                activeTone: toneBase,
-                toneSlotMap,
-                switchToTone(name) {
-                    if (name === this.activeTone || !this.toneSlotMap[name]) return;
-                    const changes = [];
-                    if (this.activeTone && this.toneSlotMap[this.activeTone]) {
-                        for (const id of this.toneSlotMap[this.activeTone]) changes.push({ slotId: id, bypassed: true });
+            if (midiConfig?.mode === 'midi' && midiConfig.vstSlotId >= 0) {
+                // MIDI PC mode — send program changes to a single VST
+                const midiMappings = midiConfig.mappings || {};
+                window._toneSwitcher = {
+                    activeTone: null,
+                    midiMode: true,
+                    switchToTone(name) {
+                        console.log('[tone-switcher] switchToTone called:', name, 'current:', this.activeTone, 'midiMode:', this.midiMode);
+                        if (name === this.activeTone) return;
+                        const program = midiMappings[name];
+                        const _api = window.slopsmithDesktop?.audio;
+                        console.log('[tone-switcher] program:', program, 'api:', !!_api, 'sendMidi:', !!_api?.sendMidiToSlot, 'slotId:', midiConfig.vstSlotId);
+                        if (program !== undefined && _api?.sendMidiToSlot) {
+                            _api.sendMidiToSlot(midiConfig.vstSlotId, 0, midiConfig.channel || 1, program);
+                            console.log('[tone-switcher] MIDI PC SENT:', name, '-> program', program);
+                        }
+                        this.activeTone = name;
                     }
-                    for (const id of this.toneSlotMap[name]) changes.push({ slotId: id, bypassed: false });
-                    if (changes.length > 0) api.setMultiBypass(changes);
-                    this.activeTone = name;
-                    console.log('[tone-switcher] Switched to:', name);
+                };
+                // Send initial PC for base tone
+                const _apiInit = window.slopsmithDesktop?.audio;
+                if (midiMappings[toneBase] !== undefined && _apiInit?.sendMidiToSlot) {
+                    _apiInit.sendMidiToSlot(midiConfig.vstSlotId, 0, midiConfig.channel || 1, midiMappings[toneBase]);
                 }
-            };
-            _preloadedSongKey = songKey;
-            console.log('[tone-switcher] Preloaded:', Object.keys(toneSlotMap));
+                _preloadedSongKey = songKey;
+                console.log('[tone-switcher] MIDI PC mode for:', Object.keys(midiMappings));
+            } else {
+                // Bypass-toggle mode — preload all presets
+                const mappings = { ...(allMappingsData.global || {}), ...(allMappingsData.songs?.[songKey] || {}) };
+                if (Object.keys(mappings).length === 0) return;
+
+                const presets = JSON.parse(localStorage.getItem('slopsmith-chain-presets') || '{}');
+                const toneNames = new Set([toneBase]);
+                for (const tc of toneChanges) toneNames.add(tc.name);
+
+                await api.clearChain();
+                window._toneSwitcher = null;
+                const toneSlotMap = {};
+
+                for (const toneName of toneNames) {
+                    const presetName = mappings[toneName] || mappings['$default'];
+                    if (!presetName || !presets[presetName]) continue;
+                    const slotIds = [];
+                    for (const item of presets[presetName].items) {
+                        let slotId = -1;
+                        if (item.type === 'NAM' && item.path) slotId = await api.loadNAMModel(item.path);
+                        else if (item.type === 'IR' && item.path) slotId = await api.loadIR(item.path);
+                        else if (item.type === 'VST' && item.path) slotId = await api.loadVST(item.path);
+                        if (slotId >= 0) slotIds.push(slotId);
+                    }
+                    toneSlotMap[toneName] = slotIds;
+                    if (toneName !== toneBase && slotIds.length > 0) {
+                        await api.setMultiBypass(slotIds.map(id => ({ slotId: id, bypassed: true })));
+                    }
+                }
+
+                window._toneSwitcher = {
+                    activeTone: toneBase,
+                    toneSlotMap,
+                    switchToTone(name) {
+                        if (name === this.activeTone || !this.toneSlotMap[name]) return;
+                        const changes = [];
+                        if (this.activeTone && this.toneSlotMap[this.activeTone]) {
+                            for (const id of this.toneSlotMap[this.activeTone]) changes.push({ slotId: id, bypassed: true });
+                        }
+                        for (const id of this.toneSlotMap[name]) changes.push({ slotId: id, bypassed: false });
+                        if (changes.length > 0) api.setMultiBypass(changes);
+                        this.activeTone = name;
+                        console.log('[tone-switcher] Switched to:', name);
+                    }
+                };
+                _preloadedSongKey = songKey;
+                console.log('[tone-switcher] Bypass mode preloaded:', Object.keys(toneSlotMap));
+            }
         }, 3000);
     };
 })();

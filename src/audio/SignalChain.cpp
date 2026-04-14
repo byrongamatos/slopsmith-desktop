@@ -56,12 +56,45 @@ void SignalChain::releaseResources()
 void SignalChain::process(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     const juce::ScopedTryLock sl(lock);
-    if (!sl.isLocked()) return; // skip this block if chain is being modified
+    if (!sl.isLocked()) return;
+
+    // Drain pending MIDI messages from the lock-free queue
+    struct DrainedMsg { int slotId; juce::MidiMessage msg; };
+    DrainedMsg drained[kMidiQueueSize];
+    int numDrained = 0;
+
+    const auto scope = midiQueueFifo.read(midiQueueFifo.getNumReady());
+    for (int i = 0; i < scope.blockSize1 && numDrained < kMidiQueueSize; ++i)
+        drained[numDrained++] = { midiRingBuffer[(size_t)scope.startIndex1 + i].targetSlotId,
+                                   midiRingBuffer[(size_t)scope.startIndex1 + i].msg };
+    for (int i = 0; i < scope.blockSize2 && numDrained < kMidiQueueSize; ++i)
+        drained[numDrained++] = { midiRingBuffer[(size_t)scope.startIndex2 + i].targetSlotId,
+                                   midiRingBuffer[(size_t)scope.startIndex2 + i].msg };
+
     for (auto* slot : slots)
     {
         if (slot->processor && !slot->bypassed)
-            slot->processor->processBlock(buffer, midi);
+        {
+            // Build per-slot MIDI buffer from drained messages
+            juce::MidiBuffer slotMidi(midi); // start with pass-through MIDI
+            for (int i = 0; i < numDrained; ++i)
+            {
+                if (drained[i].slotId == slot->id || drained[i].slotId == -1)
+                    slotMidi.addEvent(drained[i].msg, 0);
+            }
+            slot->processor->processBlock(buffer, slotMidi);
+        }
     }
+}
+
+void SignalChain::queueMidiMessage(int targetSlotId, const juce::MidiMessage& msg)
+{
+    const auto scope = midiQueueFifo.write(1);
+    if (scope.blockSize1 > 0)
+        midiRingBuffer[(size_t)scope.startIndex1] = { targetSlotId, msg };
+    else if (scope.blockSize2 > 0)
+        midiRingBuffer[(size_t)scope.startIndex2] = { targetSlotId, msg };
+    // If queue full, message silently dropped (acceptable for PC messages)
 }
 
 int SignalChain::addProcessor(std::unique_ptr<juce::AudioProcessor> processor,

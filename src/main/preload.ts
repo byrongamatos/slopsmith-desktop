@@ -68,6 +68,10 @@ contextBridge.exposeInMainWorld('slopsmithDesktop', {
         setParameter: (slotId: number, paramIndex: number, value: number) =>
             ipcRenderer.invoke('audio:setParameter', slotId, paramIndex, value),
 
+        // MIDI
+        sendMidiToSlot: (slotId: number, msgType: number, channel: number, param1: number, param2?: number) =>
+            ipcRenderer.invoke('audio:sendMidiToSlot', slotId, msgType, channel, param1, param2),
+
         // Backing track
         loadBackingTrack: (filePath: string) => ipcRenderer.invoke('audio:loadBackingTrack', filePath),
         startBacking: () => ipcRenderer.invoke('audio:startBacking'),
