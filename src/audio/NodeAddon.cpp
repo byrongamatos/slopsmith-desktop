@@ -429,59 +429,35 @@ static Napi::Value LoadPluginList(const Napi::CallbackInfo& info)
 
 // ── Signal Chain Management ──────────────────────────────────────────────────
 
-class LoadVSTWorker : public Napi::AsyncWorker
-{
-public:
-    LoadVSTWorker(Napi::Env env, Napi::Promise::Deferred deferred, std::string path)
-        : Napi::AsyncWorker(env), deferred_(deferred), pluginPath_(std::move(path)) {}
-
-    void Execute() override
-    {
-        if (!engine || !vstHost) { slotId_ = -1; return; }
-
-        juce::String error;
-        auto instance = vstHost->loadPlugin(
-            juce::String(pluginPath_),
-            engine->getCurrentSampleRate(),
-            engine->getCurrentBlockSize(),
-            error);
-
-        if (instance)
-        {
-            auto name = instance->getName();
-            slotId_ = engine->getSignalChain().addProcessor(
-                std::move(instance),
-                ProcessorSlot::Type::VST,
-                name,
-                juce::String(pluginPath_));
-        }
-        else
-            fprintf(stderr, "[LoadVST] Failed: %s\n", error.toRawUTF8());
-    }
-
-    void OnOK() override { deferred_.Resolve(Napi::Number::New(Env(), slotId_)); }
-    void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
-
-private:
-    Napi::Promise::Deferred deferred_;
-    std::string pluginPath_;
-    int slotId_ = -1;
-};
-
 static Napi::Value LoadVST(const Napi::CallbackInfo& info)
 {
     auto env = info.Env();
-    auto deferred = Napi::Promise::Deferred::New(env);
-
-    if (!engine || !vstHost || info.Length() < 1) {
-        deferred.Resolve(Napi::Number::New(env, -1));
-        return deferred.Promise();
-    }
+    if (!engine || !vstHost || info.Length() < 1)
+        return Napi::Number::New(env, -1);
 
     auto pluginPath = info[0].As<Napi::String>().Utf8Value();
-    auto worker = new LoadVSTWorker(env, deferred, pluginPath);
-    worker->Queue();
-    return deferred.Promise();
+    int slotId = -1;
+
+    juce::String error;
+    auto instance = vstHost->loadPlugin(
+        juce::String(pluginPath),
+        engine->getCurrentSampleRate(),
+        engine->getCurrentBlockSize(),
+        error);
+
+    if (instance)
+    {
+        auto name = instance->getName();
+        slotId = engine->getSignalChain().addProcessor(
+            std::move(instance),
+            ProcessorSlot::Type::VST,
+            name,
+            juce::String(pluginPath));
+    }
+    else
+        fprintf(stderr, "[LoadVST] Failed: %s\n", error.toRawUTF8());
+
+    return Napi::Number::New(env, slotId);
 }
 
 class LoadNAMWorker : public Napi::AsyncWorker

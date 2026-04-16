@@ -153,8 +153,8 @@ export function initAudioBridge(mainWindow: BrowserWindow | null): void {
 
     // ── Signal Chain ───────────────────────────────────────────────────────
 
-    ipcMain.handle('audio:loadVST', async (_event, pluginPath: string) => {
-        return await audio?.loadVST(pluginPath) ?? -1;
+    ipcMain.handle('audio:loadVST', (_event, pluginPath: string) => {
+        return audio?.loadVST(pluginPath) ?? -1;
     });
 
     ipcMain.handle('audio:loadNAMModel', async (_event, modelPath: string) => {
