@@ -9,7 +9,7 @@
   "main": "dist/main/main.js",
   "scripts": {
     "build:ts": "tsc",
-    "build:audio": "cmake-js build --runtime electron --runtime-version 35.0.0 --arch $(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/') -- -DCMAKE_BUILD_TYPE=Release",
+    "build:audio": "cmake-js build --runtime electron --runtime-version 35.0.0 --arch $(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/')",
     "build:audio:debug": "cmake-js build --runtime electron --runtime-version 35.0.0 -- -DCMAKE_BUILD_TYPE=Debug",
     "rebuild:audio": "cmake-js rebuild --runtime electron --runtime-version 35.0.0",
     "start": "npm run build:ts && electron .",
