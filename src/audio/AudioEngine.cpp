@@ -1,5 +1,10 @@
 #include "AudioEngine.h"
 
+// On Windows, ASIO drivers can crash with access violations.
+// We catch C++ exceptions but can't easily catch SEH in functions with dtors.
+// The try/catch blocks around device operations are the best we can do
+// without restructuring the code into SEH-safe wrapper functions.
+
 AudioEngine::AudioEngine()
 {
     formatManager.registerBasicFormats();
@@ -119,8 +124,17 @@ bool AudioEngine::setDeviceType(const juce::String& typeName)
     {
         if (type->getTypeName() == typeName)
         {
-            deviceManager.setCurrentAudioDeviceType(typeName, true);
-            return true;
+            try {
+                fprintf(stderr, "[AudioEngine] Setting device type: %s\n", typeName.toRawUTF8());
+                deviceManager.setCurrentAudioDeviceType(typeName, true);
+                return true;
+            } catch (const std::exception& e) {
+                fprintf(stderr, "[AudioEngine] setDeviceType crashed: %s\n", e.what());
+                return false;
+            } catch (...) {
+                fprintf(stderr, "[AudioEngine] setDeviceType crashed (unknown)\n");
+                return false;
+            }
         }
     }
     return false;
@@ -156,12 +170,16 @@ bool AudioEngine::setAudioDevice(const juce::String& inputName, const juce::Stri
     // Close the device completely to avoid ALSA deadlocks on reconfigure
     if (deviceManager.getCurrentAudioDevice() != nullptr)
     {
-        deviceManager.closeAudioDevice();
-        fprintf(stderr, "[AudioEngine] Closed device for reconfiguration\n");
+        try {
+            deviceManager.closeAudioDevice();
+            fprintf(stderr, "[AudioEngine] Closed device for reconfiguration\n");
 
-        // Re-set the device type so the device list is repopulated
-        if (currentTypeName.isNotEmpty())
-            deviceManager.setCurrentAudioDeviceType(currentTypeName, true);
+            // Re-set the device type so the device list is repopulated
+            if (currentTypeName.isNotEmpty())
+                deviceManager.setCurrentAudioDeviceType(currentTypeName, true);
+        } catch (...) {
+            fprintf(stderr, "[AudioEngine] closeAudioDevice crashed, continuing\n");
+        }
     }
 
     // Initialize if no device type set yet
@@ -197,12 +215,22 @@ bool AudioEngine::setAudioDevice(const juce::String& inputName, const juce::Stri
     setup.useDefaultInputChannels = inputName.isEmpty();
     setup.useDefaultOutputChannels = outputName.isEmpty();
 
-    auto result = deviceManager.setAudioDeviceSetup(setup, true);
+    juce::String result;
+    try {
+        result = deviceManager.setAudioDeviceSetup(setup, true);
+    } catch (...) {
+        fprintf(stderr, "[AudioEngine] setAudioDeviceSetup crashed\n");
+        return false;
+    }
     if (result.isNotEmpty())
     {
         fprintf(stderr, "[AudioEngine] Device setup error: %s\n", result.toRawUTF8());
-        // Try fallback: initialize with defaults
-        result = deviceManager.initialiseWithDefaultDevices(2, 2);
+        try {
+            result = deviceManager.initialiseWithDefaultDevices(2, 2);
+        } catch (...) {
+            fprintf(stderr, "[AudioEngine] Fallback init crashed\n");
+            return false;
+        }
         if (result.isNotEmpty())
         {
             fprintf(stderr, "[AudioEngine] Fallback init also failed: %s\n", result.toRawUTF8());
