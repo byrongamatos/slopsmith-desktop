@@ -204,16 +204,34 @@ bool AudioEngine::setAudioDevice(const juce::String& inputName, const juce::Stri
         }
     }
 
+    // If device names are empty, use defaults for the current device type
+    juce::String resolvedInput = inputName;
+    juce::String resolvedOutput = outputName;
+    if (resolvedInput.isEmpty() || resolvedOutput.isEmpty())
+    {
+        if (auto* type = deviceManager.getCurrentDeviceTypeObject())
+        {
+            auto inputs = type->getDeviceNames(true);
+            auto outputs = type->getDeviceNames(false);
+            if (resolvedInput.isEmpty() && inputs.size() > 0)
+                resolvedInput = inputs[0];
+            if (resolvedOutput.isEmpty() && outputs.size() > 0)
+                resolvedOutput = outputs[0];
+            fprintf(stderr, "[AudioEngine] Resolved empty names: in='%s' out='%s'\n",
+                    resolvedInput.toRawUTF8(), resolvedOutput.toRawUTF8());
+        }
+    }
+
     // Configure specific devices
     juce::AudioDeviceManager::AudioDeviceSetup setup;
-    setup.inputDeviceName = inputName;
-    setup.outputDeviceName = outputName;
+    setup.inputDeviceName = resolvedInput;
+    setup.outputDeviceName = resolvedOutput;
     setup.sampleRate = sampleRate > 0 ? sampleRate : 48000.0;
     setup.bufferSize = bufferSize > 0 ? bufferSize : 256;
     setup.inputChannels.setRange(0, 2, true);
     setup.outputChannels.setRange(0, 2, true);
-    setup.useDefaultInputChannels = inputName.isEmpty();
-    setup.useDefaultOutputChannels = outputName.isEmpty();
+    setup.useDefaultInputChannels = resolvedInput.isEmpty();
+    setup.useDefaultOutputChannels = resolvedOutput.isEmpty();
 
     juce::String result;
     try {

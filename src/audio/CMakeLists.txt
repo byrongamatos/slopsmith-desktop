@@ -85,6 +85,10 @@ elseif(WIN32)
     target_compile_definitions(slopsmith_audio PRIVATE
         JUCE_ASIO=1
     )
+    # Enable /EHa so catch(...) also catches SEH exceptions (ASIO driver crashes)
+    if(MSVC)
+        target_compile_options(slopsmith_audio PRIVATE /EHa)
+    endif()
 elseif(UNIX)
     target_compile_definitions(slopsmith_audio PRIVATE
         JUCE_JACK=1
