@@ -67,9 +67,12 @@ target_compile_definitions(slopsmith_audio PRIVATE
 
 # Platform-specific
 if(APPLE)
-    target_compile_definitions(slopsmith_audio PRIVATE
-        JUCE_PLUGINHOST_AU=1
-    )
+    # NOTE: JUCE_PLUGINHOST_AU=1 requires linking CoreAudioKit/AppKit for
+    # AUGenericView, but doing so causes JUCE's MessageManager to crash
+    # when run from a Node.js native-addon thread (AppKit's NSRunLoop
+    # expects the main thread). Disabling AU hosting on macOS until the
+    # NodeAddon message-loop integration is redesigned. VST3 and NAM still
+    # work; users can load VST3 plugins instead of AU.
     target_link_libraries(slopsmith_audio PRIVATE
         "-framework CoreAudio"
         "-framework CoreMIDI"
