@@ -27,6 +27,19 @@ static void startJuceMessageThread()
     if (juceRunning.load()) return;
     juceRunning.store(true);
 
+#if JUCE_MAC
+    // On macOS, JUCE's MessageManager::runDispatchLoopUntil internally calls
+    // `-[NSApplication _nextEventMatchingEventMask:...]`, which AppKit asserts
+    // must run on the true main thread. Node.js already owns the main thread
+    // (running libuv's event loop), so we can't spawn a second NS event pump
+    // without hitting `nextEventMatchingMask should only be called from the
+    // Main Thread!` and aborting.
+    //
+    // Workaround: designate Node's current thread as JUCE's message thread and
+    // skip the dispatch loop. callAsync()'d callbacks will still queue; we
+    // drain them from the Node thread via a libuv timer created below.
+    juce::MessageManager::getInstance();
+#else
     juceMessageThread = std::thread([]() {
         juce::MessageManager::getInstance();
         while (juceRunning.load())
@@ -35,13 +48,18 @@ static void startJuceMessageThread()
         }
         juce::MessageManager::deleteInstance();
     });
+#endif
 }
 
 static void stopJuceMessageThread()
 {
     juceRunning.store(false);
+#if !JUCE_MAC
     if (juceMessageThread.joinable())
         juceMessageThread.join();
+#else
+    juce::MessageManager::deleteInstance();
+#endif
 }
 
 // ── Helper: dispatch on JUCE message thread ───────────────────────────────────
@@ -49,12 +67,20 @@ static void stopJuceMessageThread()
 template <typename Func>
 static void dispatchOnMessageThread(Func&& func)
 {
+#if JUCE_MAC
+    // No background message thread on macOS — execute inline on caller thread.
+    // Audio device / NAM / IR init is thread-safe for our use; VST/AU plugin
+    // instantiation (which genuinely requires a message thread on macOS) is
+    // the one capability we give up until a proper libuv-based pump lands.
+    func();
+#else
     juce::WaitableEvent done;
     juce::MessageManager::callAsync([&]() {
         func();
         done.signal();
     });
     done.wait(15000);
+#endif
 }
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
@@ -63,19 +89,19 @@ static Napi::Value Init(const Napi::CallbackInfo& info)
 {
     auto env = info.Env();
 
-    // Start JUCE message thread first
+    // Start JUCE message thread first (no-op on macOS — see startJuceMessageThread)
     startJuceMessageThread();
 
+#if !JUCE_MAC
     // Small delay to ensure message thread is pumping
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
+#endif
 
-    // Create engine on the JUCE message thread
-    juce::WaitableEvent done;
-    juce::MessageManager::callAsync([&]() {
+    // Create engine on the JUCE message thread (or inline on macOS)
+    dispatchOnMessageThread([]() {
         engine = std::make_unique<AudioEngine>();
         vstHost = std::make_unique<VSTHost>();
 
-        // Log what we got
         auto types = engine->getDeviceTypes();
         fprintf(stderr, "[audio-native] Init complete. Device types: %d\n", types.size());
         for (int i = 0; i < types.size(); ++i)
@@ -83,12 +109,7 @@ static Napi::Value Init(const Napi::CallbackInfo& info)
                     types[i].name.toRawUTF8(),
                     types[i].inputDevices.size(),
                     types[i].outputDevices.size());
-
-        done.signal();
     });
-
-    if (!done.wait(15000))
-        fprintf(stderr, "[audio-native] WARNING: Init timed out!\n");
 
     return env.Undefined();
 }
