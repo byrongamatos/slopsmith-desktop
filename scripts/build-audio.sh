@@ -39,12 +39,14 @@ echo "  Arch: $CMAKE_ARCH"
 echo "  Electron: $ELECTRON_VERSION"
 echo "  Build type: $BUILD_TYPE"
 
+# cmake-js 7+ routes args after `--` to the BUILD step, not CONFIGURE,
+# which cmake 4.x rejects. Use --CD<VAR>=<VAL> to pass cmake cache
+# variables to the CONFIGURE step instead.
 npx cmake-js build \
     --runtime electron \
     --runtime-version "$ELECTRON_VERSION" \
     --arch "$CMAKE_ARCH" \
-    -- \
-    -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+    --CDCMAKE_BUILD_TYPE="$BUILD_TYPE"
 
 echo ""
 echo "Build complete!"
