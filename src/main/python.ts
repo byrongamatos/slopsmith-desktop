@@ -168,13 +168,17 @@ export async function startPython(): Promise<void> {
             : '') + (process.env.PATH || ''),
     };
 
-    // On Linux/macOS, set PYTHONHOME and LD_LIBRARY_PATH for bundled Python
-    if (app.isPackaged && process.platform !== 'win32') {
-        const runtimeDir = path.join(process.resourcesPath, 'python', 'runtime');
-        pythonEnv.PYTHONHOME = runtimeDir;
-        if (process.platform === 'linux') {
-            const pythonLibDir = path.join(runtimeDir, 'lib');
-            pythonEnv.LD_LIBRARY_PATH = pythonLibDir + path.delimiter + (process.env.LD_LIBRARY_PATH || '');
+    // Set PYTHONHOME for bundled Python on all platforms
+    if (app.isPackaged) {
+        if (process.platform === 'win32') {
+            pythonEnv.PYTHONHOME = path.join(process.resourcesPath, 'python');
+        } else {
+            const runtimeDir = path.join(process.resourcesPath, 'python', 'runtime');
+            pythonEnv.PYTHONHOME = runtimeDir;
+            if (process.platform === 'linux') {
+                const pythonLibDir = path.join(runtimeDir, 'lib');
+                pythonEnv.LD_LIBRARY_PATH = pythonLibDir + path.delimiter + (process.env.LD_LIBRARY_PATH || '');
+            }
         }
     }
 
