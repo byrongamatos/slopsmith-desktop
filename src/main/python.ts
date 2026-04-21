@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import { app } from 'electron';
 import * as http from 'http';
 import * as net from 'net';
+import { getActiveSoundfontPath } from './soundfont-manager';
 
 let pythonProcess: ChildProcess | null = null;
 let serverPort = 18000; // Use 18000+ to avoid conflicting with Docker Slopsmith on 8000
@@ -167,6 +168,14 @@ export async function startPython(): Promise<void> {
             ? path.join(process.resourcesPath, 'bin') + path.delimiter
             : '') + (process.env.PATH || ''),
     };
+
+    // Honour the "Audio Quality" preference: if the user has opted into the
+    // high-quality FluidR3 soundfont and the file exists, point Python at it.
+    // Otherwise fall through to the bundled GeneralUser GS via RESOURCESPATH.
+    const activeSoundfont = getActiveSoundfontPath();
+    if (activeSoundfont) {
+        pythonEnv.SLOPSMITH_SOUNDFONT = activeSoundfont;
+    }
 
     // Set PYTHONHOME for bundled Python on all platforms
     if (app.isPackaged) {

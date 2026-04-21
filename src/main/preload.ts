@@ -95,6 +95,21 @@ contextBridge.exposeInMainWorld('slopsmithDesktop', {
         listInstalled: () => ipcRenderer.invoke('plugins:listInstalled'),
     },
 
+    // Soundfont (Audio Quality preference for GP5 → audio rendering)
+    soundfont: {
+        getStatus: () => ipcRenderer.invoke('soundfont:getStatus'),
+        downloadHighQuality: () => ipcRenderer.invoke('soundfont:downloadHighQuality'),
+        cancelDownload: () => ipcRenderer.invoke('soundfont:cancelDownload'),
+        setQuality: (quality: 'default' | 'high') => ipcRenderer.invoke('soundfont:setQuality', quality),
+        onDownloadProgress: (
+            callback: (progress: { bytesDownloaded: number; totalBytes: number; percent: number }) => void,
+        ) => {
+            const listener = (_event: unknown, progress: { bytesDownloaded: number; totalBytes: number; percent: number }) => callback(progress);
+            ipcRenderer.on('soundfont:downloadProgress', listener);
+            return () => ipcRenderer.removeListener('soundfont:downloadProgress', listener);
+        },
+    },
+
     // File dialogs
     pickFile: (filters?: { name: string; extensions: string[] }[]) =>
         ipcRenderer.invoke('dialog:pickFile', filters),

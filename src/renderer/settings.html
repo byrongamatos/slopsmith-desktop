@@ -9,6 +9,32 @@
         <p class="text-xs text-slate-500 mt-1">Compensates for audio latency. Increase if music leads the tab, decrease if tab leads the music.</p>
     </div>
     <div>
+        <label class="block text-xs text-slate-400 mb-1">Audio Quality (Guitar Pro → audio rendering)</label>
+        <div class="space-y-2">
+            <label class="flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="radio" name="ae-sf-quality" value="default" id="ae-sf-default" class="mt-1 accent-blue-500">
+                <span>
+                    <span class="block">Default — GeneralUser GS (~32 MB, bundled)</span>
+                    <span class="block text-xs text-slate-500">Good quality for practice-reference audio. Ships with the installer.</span>
+                </span>
+            </label>
+            <label class="flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
+                <input type="radio" name="ae-sf-quality" value="high" id="ae-sf-high" class="mt-1 accent-blue-500" disabled>
+                <span>
+                    <span class="block">High — FluidR3_GM (~142 MB, downloaded)</span>
+                    <span id="ae-sf-high-status" class="block text-xs text-slate-500">Not downloaded yet.</span>
+                </span>
+            </label>
+        </div>
+        <div class="mt-2 flex items-center gap-2">
+            <button id="ae-sf-download" class="px-3 py-1.5 rounded bg-slate-600 hover:bg-slate-500 text-sm">Download 142 MB</button>
+            <button id="ae-sf-cancel" class="hidden px-3 py-1.5 rounded bg-slate-700 hover:bg-slate-600 text-sm">Cancel</button>
+            <span id="ae-sf-progress-label" class="hidden text-xs text-slate-400"></span>
+        </div>
+        <progress id="ae-sf-progress" class="hidden w-full mt-2 h-1.5" max="100" value="0"></progress>
+        <p id="ae-sf-message" class="hidden text-xs mt-2"></p>
+    </div>
+    <div>
         <label class="block text-xs text-slate-400 mb-1">DLC Folder</label>
         <div class="flex gap-2">
             <input type="text" id="ae-dlc-path" class="flex-1 bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm">

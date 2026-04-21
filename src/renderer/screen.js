@@ -539,6 +539,105 @@
                 localStorage.setItem('slopsmith-sync-offset', String(val));
             });
         }
+
+        setupAudioQualityControls();
+    }
+
+    // ── Audio Quality (soundfont) ─────────────────────────────────────────────
+    function setupAudioQualityControls() {
+        const api = window.slopsmithDesktop?.soundfont;
+        const defaultRadio = document.getElementById('ae-sf-default');
+        const highRadio = document.getElementById('ae-sf-high');
+        const highStatus = document.getElementById('ae-sf-high-status');
+        const downloadBtn = document.getElementById('ae-sf-download');
+        const cancelBtn = document.getElementById('ae-sf-cancel');
+        const progress = document.getElementById('ae-sf-progress');
+        const progressLabel = document.getElementById('ae-sf-progress-label');
+        const msg = document.getElementById('ae-sf-message');
+
+        if (!api || !defaultRadio || !highRadio || !downloadBtn) return;
+
+        function fmtMB(bytes) {
+            return (bytes / (1024 * 1024)).toFixed(1);
+        }
+
+        function showMessage(text, kind) {
+            msg.textContent = text;
+            msg.classList.remove('hidden', 'text-slate-400', 'text-green-400', 'text-red-400');
+            msg.classList.add(kind === 'error' ? 'text-red-400' : kind === 'success' ? 'text-green-400' : 'text-slate-400');
+        }
+
+        async function refresh() {
+            const status = await api.getStatus();
+            defaultRadio.checked = status.activeQuality === 'default';
+            highRadio.checked = status.activeQuality === 'high';
+            highRadio.disabled = !status.highDownloaded;
+
+            if (status.highDownloaded) {
+                highStatus.textContent = `Downloaded. ${status.activeQuality === 'high' ? 'Active.' : 'Select to activate.'}`;
+                downloadBtn.textContent = 'Redownload';
+            } else {
+                highStatus.textContent = 'Not downloaded yet.';
+                downloadBtn.textContent = `Download ${status.expectedSizeMB} MB`;
+            }
+
+            downloadBtn.disabled = status.downloadInProgress;
+            cancelBtn.classList.toggle('hidden', !status.downloadInProgress);
+            progress.classList.toggle('hidden', !status.downloadInProgress);
+            progressLabel.classList.toggle('hidden', !status.downloadInProgress);
+        }
+
+        downloadBtn.addEventListener('click', async () => {
+            downloadBtn.disabled = true;
+            cancelBtn.classList.remove('hidden');
+            progress.classList.remove('hidden');
+            progressLabel.classList.remove('hidden');
+            progress.value = 0;
+            progressLabel.textContent = 'Starting download…';
+            msg.classList.add('hidden');
+
+            const result = await api.downloadHighQuality();
+            cancelBtn.classList.add('hidden');
+            if (result.success) {
+                showMessage('Download complete. Select "High" to activate.', 'success');
+            } else {
+                progress.classList.add('hidden');
+                progressLabel.classList.add('hidden');
+                showMessage(result.message, 'error');
+            }
+            await refresh();
+        });
+
+        cancelBtn.addEventListener('click', async () => {
+            await api.cancelDownload();
+            showMessage('Download cancelled.', 'info');
+            await refresh();
+        });
+
+        async function handleQualityChange(quality) {
+            const result = await api.setQuality(quality);
+            if (result.success) {
+                showMessage(result.message, 'info');
+            } else {
+                showMessage(result.message, 'error');
+                await refresh();
+            }
+        }
+
+        defaultRadio.addEventListener('change', () => {
+            if (defaultRadio.checked) handleQualityChange('default');
+        });
+        highRadio.addEventListener('change', () => {
+            if (highRadio.checked) handleQualityChange('high');
+        });
+
+        api.onDownloadProgress(({ bytesDownloaded, totalBytes, percent }) => {
+            progress.value = percent;
+            const total = totalBytes > 0 ? `${fmtMB(bytesDownloaded)} / ${fmtMB(totalBytes)} MB` : `${fmtMB(bytesDownloaded)} MB`;
+            progressLabel.textContent = `${total} (${percent.toFixed(0)}%)`;
+        });
+
+        refresh();
     }
 
     // ── Settings path pickers ──────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import * as path from 'path';
 import { startPython, stopPython, waitForPython, getPythonPort } from './python';
 import { initAudioBridge, shutdownAudio } from './audio-bridge';
 import { initPluginManager } from './plugin-manager';
+import { initSoundfontManager } from './soundfont-manager';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -88,6 +89,9 @@ async function startup(): Promise<void> {
 
     // Initialize plugin manager IPC handlers
     initPluginManager();
+
+    // Initialize soundfont manager IPC handlers (Audio Quality preference)
+    initSoundfontManager(() => mainWindow);
 
     // Wait for Python server to be ready
     const port = await waitForPython();
