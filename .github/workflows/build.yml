@@ -305,13 +305,24 @@ jobs:
           # Licence: the GeneralUser GS license permits free redistribution in
           # FOSS apps; see resources/soundfonts/LICENSE.
           SF_SHA="298b552d2e9d1307e03e5c5c99d2c046aaed9ec3"
-          # Served via jsDelivr (pinned to the same commit SHA) — the macOS
-          # runner intermittently dropped mid-stream fetching the same file
-          # from raw.githubusercontent.com, so we use jsDelivr's CDN which
-          # historically handles 32 MB downloads more reliably.
-          curl -sL --fail --retry 5 --retry-delay 5 --retry-all-errors \
-              "https://cdn.jsdelivr.net/gh/mrbumpy409/GeneralUser-GS@${SF_SHA}/GeneralUser-GS.sf2" \
-              -o resources/soundfonts/GeneralUser-GS.sf2
+          SF_URL="https://cdn.jsdelivr.net/gh/mrbumpy409/GeneralUser-GS@${SF_SHA}/GeneralUser-GS.sf2"
+          SF_OUT="resources/soundfonts/GeneralUser-GS.sf2"
+          # Explicit resume-aware retry loop. curl --retry restarts from byte
+          # 0 every attempt, which fails reliably on the macOS-14 runner
+          # where the connection consistently drops mid-stream around the
+          # 30 MB mark. `-C -` resumes from the byte already on disk, so each
+          # retry preserves progress.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if curl -sL --fail -C - "$SF_URL" -o "$SF_OUT"; then
+                  break
+              fi
+              echo "Soundfont download attempt $attempt failed; retrying in 10s…" >&2
+              sleep 10
+              if [ "$attempt" = "10" ]; then
+                  echo "ERROR: soundfont download failed after 10 attempts" >&2
+                  exit 1
+              fi
+          done
           # Sanity-check the header — .sf2 is RIFF/SFBK.
           head -c 4 resources/soundfonts/GeneralUser-GS.sf2 | grep -q RIFF \
               || { echo "ERROR: downloaded soundfont is not RIFF" >&2; exit 1; }
