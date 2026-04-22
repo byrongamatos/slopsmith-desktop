@@ -108,12 +108,48 @@ for lib in libvgmstream libjansson libmpg123; do
     fi
 done
 
+# Pull in fluidsynth's non-system .so dependencies so it runs on end-user
+# machines without the libfluidsynth3 (etc.) system packages. Mirrors the
+# CI step in .github/workflows/build.yml. Requires patchelf (`sudo apt
+# install patchelf`).
+if [ -f "$BIN_DIR/fluidsynth" ] && command -v patchelf >/dev/null 2>&1; then
+    ldd "$BIN_DIR/fluidsynth" | awk '/=>/ {print $3}' | while read -r lib; do
+        [ -n "$lib" ] && [ -f "$lib" ] || continue
+        case "$(basename "$lib")" in
+            libc.so*|libm.so*|libpthread.so*|libdl.so*|librt.so*|\
+            ld-linux*|libresolv.so*|linux-vdso*|linux-gate*|\
+            libnsl.so*|libutil.so*|libgcc_s.so*)
+                continue
+                ;;
+        esac
+        cp -L "$lib" "$BIN_DIR/" 2>/dev/null || true
+    done
+    patchelf --set-rpath '$ORIGIN' "$BIN_DIR/fluidsynth"
+    for so in "$BIN_DIR"/*.so*; do
+        [ -f "$so" ] && patchelf --set-rpath '$ORIGIN' "$so" 2>/dev/null || true
+    done
+elif [ -f "$BIN_DIR/fluidsynth" ]; then
+    echo "  WARNING: patchelf not found — fluidsynth will require system libs at runtime"
+fi
+
 # ── 5. Default resources ──────────────────────────────────────────────────
 echo "[5/6] Copying default resources..."
 # NAM models and IRs stay as user downloads, not bundled
 # But copy the default IRs
 mkdir -p "$PROJECT_DIR/resources/default-irs"
 cp "$PROJECT_DIR/models/cabs/"*.wav "$PROJECT_DIR/resources/default-irs/" 2>/dev/null || true
+
+# Default soundfont (for GP5 → audio rendering). Downloaded if not present;
+# CI does the same thing in .github/workflows/build.yml.
+SF_DIR="$PROJECT_DIR/resources/soundfonts"
+SF_FILE="$SF_DIR/GeneralUser-GS.sf2"
+SF_URL="https://github.com/byrongamatos/slopsmith-desktop/releases/download/soundfonts-v1/GeneralUser-GS.sf2"
+mkdir -p "$SF_DIR"
+if [ ! -f "$SF_FILE" ]; then
+    echo "  downloading GeneralUser-GS.sf2 (32 MB)..."
+    curl -sL --fail --retry 5 --retry-delay 5 --retry-all-errors "$SF_URL" -o "$SF_FILE"
+fi
+echo "  soundfont: $(du -h "$SF_FILE" | cut -f1)"
 
 # ── 6. Summary ────────────────────────────────────────────────────────────
 echo "[6/6] Bundle summary:"

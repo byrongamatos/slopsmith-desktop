@@ -51,11 +51,11 @@ jobs:
             libasound2-dev libjack-jackd2-dev libfreetype-dev \
             libx11-dev libxrandr-dev libxcursor-dev libxinerama-dev libxext-dev \
             libcurl4-openssl-dev libwebkit2gtk-4.1-dev \
-            pkg-config cmake ffmpeg
+            pkg-config cmake ffmpeg fluidsynth patchelf
 
       - name: Install macOS dependencies
         if: matrix.platform == 'mac'
-        run: brew install cmake pkg-config ffmpeg
+        run: brew install cmake pkg-config ffmpeg fluid-synth dylibbundler
 
       - name: Install Windows dependencies
         if: matrix.platform == 'win'
@@ -195,15 +195,70 @@ jobs:
           cp -r /tmp/rscli-out/* $GITHUB_WORKSPACE/resources/bin/rscli/
           echo "RsCli bundled for $RID ($(du -sh $GITHUB_WORKSPACE/resources/bin/rscli/ | cut -f1))"
 
-      - name: Bundle system binaries
+      - name: Bundle system binaries (Linux/macOS)
         run: |
+          set -euo pipefail
           mkdir -p resources/bin
+
           if command -v ffmpeg &>/dev/null; then
-            cp $(which ffmpeg) resources/bin/ 2>/dev/null || true
+            cp "$(which ffmpeg)" resources/bin/
           fi
-          if command -v vgmstream-cli &>/dev/null; then
-            cp $(which vgmstream-cli) resources/bin/ 2>/dev/null || true
+
+          # fluidsynth: copy the binary, then pull in its non-system shared
+          # libraries so the bundle runs on end-user machines without the
+          # system package installed. See desktop#12 review for detail.
+          if command -v fluidsynth &>/dev/null; then
+            cp "$(which fluidsynth)" resources/bin/fluidsynth
+            if [ "${{ matrix.platform }}" = "linux" ]; then
+              # Walk ldd output; copy every .so that isn't glibc or kernel-
+              # provided. Then set RPATH to $ORIGIN on the binary and each
+              # copied .so so they resolve sibling libs at runtime.
+              ldd resources/bin/fluidsynth | awk '/=>/ {print $3}' | while read -r lib; do
+                  [ -n "$lib" ] && [ -f "$lib" ] || continue
+                  case "$(basename "$lib")" in
+                      libc.so*|libm.so*|libpthread.so*|libdl.so*|librt.so*|\
+                      ld-linux*|libresolv.so*|linux-vdso*|linux-gate*|\
+                      libnsl.so*|libutil.so*|libgcc_s.so*)
+                          continue
+                          ;;
+                  esac
+                  cp -L "$lib" resources/bin/
+              done
+              patchelf --set-rpath '$ORIGIN' resources/bin/fluidsynth
+              for so in resources/bin/*.so*; do
+                  [ -f "$so" ] && patchelf --set-rpath '$ORIGIN' "$so" || true
+              done
+            else
+              # macOS: dylibbundler walks the dyld graph, copies non-system
+              # dylibs into resources/bin, and rewrites load commands to use
+              # @executable_path/<name>. Do NOT use -od — it wipes the
+              # destination dir (including the binary we just copied in).
+              # -cd creates the dir if missing; we already mkdir'd it above.
+              dylibbundler -cd -b -x resources/bin/fluidsynth -d resources/bin -p '@executable_path/'
+            fi
           fi
+
+          # vgmstream-cli: not packaged in Ubuntu apt; brew has it but we
+          # pin the official release binary for reproducibility across both
+          # platforms. Closes desktop#9 (Linux/macOS silent audio).
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            VGM_ASSET="vgmstream-linux-cli.zip"
+          else
+            VGM_ASSET="vgmstream-mac-cli.zip"
+          fi
+          curl -sL --fail --retry 5 --retry-delay 5 --retry-all-errors \
+              "https://github.com/vgmstream/vgmstream/releases/latest/download/${VGM_ASSET}" -o /tmp/vgmstream.zip
+          unzip -q /tmp/vgmstream.zip -d /tmp/vgmstream
+          VGM_BIN=$(find /tmp/vgmstream -maxdepth 2 -name 'vgmstream-cli' -type f | head -1)
+          if [ -z "$VGM_BIN" ]; then
+              echo "ERROR: vgmstream-cli not found in $VGM_ASSET; upstream layout may have changed." >&2
+              exit 1
+          fi
+          cp "$VGM_BIN" resources/bin/vgmstream-cli
+          chmod +x resources/bin/vgmstream-cli
+
+          echo "Bundled binaries:"
+          ls -lh resources/bin/ | awk 'NR>1{printf "  %s %s\n", $5, $9}'
         shell: bash
         if: matrix.platform != 'win'
 
@@ -212,20 +267,75 @@ jobs:
         run: |
           mkdir -p resources/bin
 
-          # Download ffmpeg static build for Windows
-          curl -sL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -o /tmp/ffmpeg.zip
+          # All downloads retry on transient network failures.
+          CURL="curl -sL --fail --retry 5 --retry-delay 5 --retry-all-errors"
+
+          # ffmpeg static build
+          $CURL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -o /tmp/ffmpeg.zip
           unzip -q /tmp/ffmpeg.zip -d /tmp/ffmpeg
           cp /tmp/ffmpeg/ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe resources/bin/ 2>/dev/null || true
-          echo "ffmpeg: $(ls -lh resources/bin/ffmpeg.exe 2>/dev/null | awk '{print $5}')"
 
-          # Download vgmstream-cli for Windows
-          curl -sL "https://github.com/vgmstream/vgmstream/releases/latest/download/vgmstream-win64.zip" -o /tmp/vgmstream.zip
+          # vgmstream-cli
+          $CURL "https://github.com/vgmstream/vgmstream/releases/latest/download/vgmstream-win64.zip" -o /tmp/vgmstream.zip
           unzip -q /tmp/vgmstream.zip -d /tmp/vgmstream
           cp /tmp/vgmstream/vgmstream-cli.exe resources/bin/ 2>/dev/null || true
-          # Copy required DLLs
           cp /tmp/vgmstream/*.dll resources/bin/ 2>/dev/null || true
-          echo "vgmstream: $(ls -lh resources/bin/vgmstream-cli.exe 2>/dev/null | awk '{print $5}')"
+
+          # fluidsynth — official Windows build. The zip extracts with a
+          # version-prefixed directory, so locate fluidsynth.exe by name
+          # rather than hardcoding the path (which silently broke on
+          # v2.5.4's layout).
+          $CURL "https://github.com/FluidSynth/fluidsynth/releases/download/v2.5.4/fluidsynth-v2.5.4-win10-x64-cpp11.zip" -o /tmp/fluidsynth.zip
+          unzip -q /tmp/fluidsynth.zip -d /tmp/fluidsynth
+          FS_BIN=$(find /tmp/fluidsynth -name 'fluidsynth.exe' -type f | head -1)
+          if [ -z "$FS_BIN" ]; then
+              echo "ERROR: fluidsynth.exe not found in fluidsynth-v2.5.4 zip" >&2
+              exit 1
+          fi
+          cp "$FS_BIN" resources/bin/
+          cp "$(dirname "$FS_BIN")"/*.dll resources/bin/ 2>/dev/null || true
+
+          echo "Bundled binaries:"
+          ls -lh resources/bin/ | awk 'NR>1{printf "  %s %s\n", $5, $9}'
         if: matrix.platform == 'win'
+
+      - name: Bundle default soundfont (GeneralUser GS)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p resources/soundfonts
+          # Self-hosted mirror on this repo's `soundfonts-v1` release.
+          # raw.githubusercontent.com / jsDelivr / other CDNs repeatedly
+          # dropped mid-stream on the macOS-14 runner; GitHub release asset
+          # endpoints are reliable cross-platform. When upstream GeneralUser
+          # GS is revised, cut `soundfonts-v2` and bump URL + SHA256 together.
+          # Licence + attribution live at resources/soundfonts/LICENSE.
+          SF_URL="https://github.com/byrongamatos/slopsmith-desktop/releases/download/soundfonts-v1/GeneralUser-GS.sf2"
+          SF_SHA256="9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe"
+          SF_OUT="resources/soundfonts/GeneralUser-GS.sf2"
+          curl -sL --fail --retry 5 --retry-delay 5 --retry-all-errors "$SF_URL" -o "$SF_OUT"
+          # Integrity check — macOS doesn't ship `sha256sum`, so prefer
+          # `shasum -a 256` when available. Abort on mismatch.
+          if command -v sha256sum &>/dev/null; then
+              echo "${SF_SHA256}  ${SF_OUT}" | sha256sum -c -
+          else
+              echo "${SF_SHA256}  ${SF_OUT}" | shasum -a 256 -c -
+          fi
+          echo "Soundfont: $(ls -lh resources/soundfonts/GeneralUser-GS.sf2 | awk '{print $5}')"
+
+      - name: Smoke test bundled binaries
+        shell: bash
+        run: |
+          set -e
+          if [ "${{ matrix.platform }}" = "win" ]; then
+              ./resources/bin/fluidsynth.exe --version
+              ./resources/bin/ffmpeg.exe -version | head -1
+              ./resources/bin/vgmstream-cli.exe --help | head -1 || true
+          else
+              ./resources/bin/fluidsynth --version
+              ./resources/bin/ffmpeg -version | head -1
+              ./resources/bin/vgmstream-cli --help | head -1 || true
+          fi
 
       # ── Package ─────────────────────────────────────────────────────────
       - name: Package
