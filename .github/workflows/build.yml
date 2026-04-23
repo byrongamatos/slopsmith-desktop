@@ -341,13 +341,21 @@ jobs:
   # navbar badge + /api/version match what users just installed. Fires
   # a repository_dispatch at byrongamatos/slopsmith; the receiver
   # workflow there (sync-version.yml) does the actual commit.
-  # Requires `SLOPSMITH_SYNC_TOKEN` secret — a PAT with `repo` scope,
-  # set at the repo level. Cross-repo dispatch can't use the auto
-  # GITHUB_TOKEN. See slopsmith#81.
+  # Requires `SLOPSMITH_SYNC_TOKEN` secret. Prefer a fine-grained PAT
+  # scoped only to `byrongamatos/slopsmith` with Contents: write (or
+  # Actions: write), rather than a classic PAT with full `repo` scope —
+  # cross-repo dispatch can't use the default GITHUB_TOKEN. See
+  # slopsmith#81.
   notify-slopsmith:
     needs: release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    # The job authenticates entirely via SLOPSMITH_SYNC_TOKEN below;
+    # it never uses the workflow's GITHUB_TOKEN. Explicit empty
+    # permissions block means a compromised action on this step has
+    # zero default scope against THIS repo — blast radius is bounded
+    # by the PAT's scope, not the workflow's default token.
+    permissions: {}
     steps:
       - name: Dispatch VERSION sync to slopsmith
         env:
