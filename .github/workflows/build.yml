@@ -336,3 +336,37 @@ jobs:
           files: artifacts/**/*
           draft: true
           generate_release_notes: true
+
+  # Mirror the release tag into slopsmith core's VERSION file so the
+  # navbar badge + /api/version match what users just installed. Fires
+  # a repository_dispatch at byrongamatos/slopsmith; the receiver
+  # workflow there (sync-version.yml) does the actual commit.
+  # Requires `SLOPSMITH_SYNC_TOKEN` secret — a PAT with `repo` scope,
+  # set at the repo level. Cross-repo dispatch can't use the auto
+  # GITHUB_TOKEN. See slopsmith#81.
+  notify-slopsmith:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch VERSION sync to slopsmith
+        env:
+          GH_TOKEN: ${{ secrets.SLOPSMITH_SYNC_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version="${REF_NAME#v}"
+          # Defensive semver guard — the receiver validates too, but
+          # no reason to fire a dispatch we know will fail. Skips any
+          # non-vX.Y.Z tag (e.g. the `soundfonts-v1` asset release).
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag $REF_NAME is not vX.Y.Z — skipping slopsmith VERSION sync."
+            exit 0
+          fi
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::SLOPSMITH_SYNC_TOKEN secret is missing; cannot dispatch."
+            exit 1
+          fi
+          gh api -X POST repos/byrongamatos/slopsmith/dispatches \
+            -f event_type=desktop-released \
+            -f "client_payload[version]=$version"
+          echo "Dispatched desktop-released event (version=$version) to slopsmith."
