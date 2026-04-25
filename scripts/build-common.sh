@@ -41,7 +41,7 @@ if [[ -z "${PLATFORM:-}" ]]; then
 fi
 
 # Ensure platform is lowercase
-PLATFORM="${PLATFORM,,}"
+PLATFORM="$(echo "$PLATFORM" | tr '[:upper:]' '[:lower:]')"
 
 # Validate platform
 if [[ ! "$PLATFORM" =~ ^(linux|macos|windows)$ ]]; then
