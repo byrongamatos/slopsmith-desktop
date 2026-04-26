@@ -10,7 +10,7 @@ CONFIG="$PROJECT_DIR/.build-config.json"
 
 # Platform-specific: Return expected artifact patterns
 get_expected_artifacts() {
-	echo "$PROJECT_DIR/release/*.exe $PROJECT_DIR/release/*.zip"
+	printf "%s\n" "$PROJECT_DIR/release/*.exe" "$PROJECT_DIR/release/*.zip"
 }
 
 # Platform identifier

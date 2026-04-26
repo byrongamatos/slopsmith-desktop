@@ -230,7 +230,7 @@ bundle_soundfont() {
 # Platform-specific: Return expected artifact patterns
 # Returns space-separated glob patterns (e.g., "*.AppImage *.deb")
 get_expected_artifacts() {
-    echo "$PROJECT_DIR/release/*.AppImage $PROJECT_DIR/release/*.deb"
+    printf "%s\n" "$PROJECT_DIR/release/*.AppImage" "$PROJECT_DIR/release/*.deb"
 }
 
 build_typescript() {

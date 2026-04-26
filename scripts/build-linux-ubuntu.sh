@@ -31,7 +31,7 @@ export NC='\033[0m'
 
 # Platform-specific: Return expected artifact patterns
 get_expected_artifacts() {
-	echo "$PROJECT_DIR/release/*.AppImage $PROJECT_DIR/release/*.deb"
+	printf "%s\n" "$PROJECT_DIR/release/*.AppImage" "$PROJECT_DIR/release/*.deb"
 }
 
 # Platform-specific: Install system dependencies

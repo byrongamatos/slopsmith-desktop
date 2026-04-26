@@ -55,7 +55,7 @@ bundle_python_impl() {
 
 # Platform-specific: Return expected artifact patterns
 get_expected_artifacts() {
-    echo "$PROJECT_DIR/release/*.dmg $PROJECT_DIR/release/*.zip"
+    printf "%s\n" "$PROJECT_DIR/release/*.dmg" "$PROJECT_DIR/release/*.zip"
 }
 
 # Platform-specific: Bundle system binaries
