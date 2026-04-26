@@ -263,7 +263,7 @@ verify_artifacts() {
     if [[ $ARTIFACTS_FOUND -eq 1 ]]; then
         echo_summary "Build successful!"
         echo ""
-        ls -lh "$PROJECT_DIR/release/" 2>/dev/null | grep -v "^total" | awk 'NR > 1' | head -10
+        ls -lh "$PROJECT_DIR/release/" 2>/dev/null | grep -v "^total" | awk 'NR > 1' | head -10 || true
     else
         echo_error "No artifacts found"
         if [[ -d "$PROJECT_DIR/release" ]]; then
