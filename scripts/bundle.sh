@@ -12,7 +12,10 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 echo "=== Bundling Slopsmith Desktop (Linux) ==="
 
 bash "$SCRIPT_DIR/bundle-slopsmith.sh"
-bash "$SCRIPT_DIR/bundle-python.sh"
+# Skip Python bundling on non-Linux platforms (handled inline in platform scripts)
+if [[ "$(uname -s)" == "Linux" ]]; then
+  bash "$SCRIPT_DIR/bundle-python.sh"
+fi
 bash "$SCRIPT_DIR/bundle-binaries.sh"
 bash "$SCRIPT_DIR/bundle-soundfont.sh"
 
