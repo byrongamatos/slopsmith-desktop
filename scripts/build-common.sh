@@ -258,8 +258,12 @@ verify_artifacts() {
     patterns+=("$line")
   done < <(get_expected_artifacts)
     for pattern in "${patterns[@]}"; do
-        if compgen -G "$pattern" >/dev/null; then
-            ARTIFACTS_FOUND=1
+    # Use array expansion for Bash 3.x compatibility
+    files=($pattern)
+    if [ -e "${files[0]}" ]; then
+      ARTIFACTS_FOUND=1
+      break
+    fi
             break
         fi
     done
