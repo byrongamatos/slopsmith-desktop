@@ -60,7 +60,7 @@ fi
 # vgmstream's shared libs - its binary links against libvgmstream /
 # libjansson / libmpg123 which aren't always on end-user systems.
 for lib in libvgmstream libjansson libmpg123; do
-    found=$(ldconfig -p 2>/dev/null | grep "$lib" | head -1 | awk '{print $NF}')
+    found=$(ldconfig -p 2>/dev/null | (grep "$lib" || true) | head -1 | awk '{print $NF}')
     if [ -n "$found" ] && [ -f "$found" ]; then
         cp -L "$found" "$BIN_DIR/"
     fi
