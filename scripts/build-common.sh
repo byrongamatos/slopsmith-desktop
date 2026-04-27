@@ -255,16 +255,26 @@ verify_artifacts() {
     # Read patterns into array (avoid process substitution for CI compatibility)
   patterns=()
   tempfile=$(mktemp)
+  echo "DEBUG: Getting patterns from get_expected_artifacts..." >&2
   get_expected_artifacts > "$tempfile"
+  echo "DEBUG: Temp file contents:" >&2
+  cat "$tempfile" >&2
   while IFS= read -r line; do
     patterns+=("$line")
   done < "$tempfile"
   rm -f "$tempfile"
+  echo "DEBUG: patterns array has ${#patterns[@]} entries" >&2
+  for i in "${!patterns[@]}"; do
+    echo "DEBUG: patterns[$i] = '${patterns[$i]}'" >&2
+  done
   for pattern in "${patterns[@]}"; do
+    echo "DEBUG: Testing pattern: $pattern" >&2
     shopt -s nullglob
     files=($pattern)
     shopt -u nullglob
+    echo "DEBUG: Matched ${#files[@]} files" >&2
     if [ ${#files[@]} -gt 0 ]; then
+      echo "DEBUG: Found matches, setting ARTIFACTS_FOUND=1" >&2
       ARTIFACTS_FOUND=1
       break
     fi
