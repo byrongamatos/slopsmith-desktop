@@ -55,6 +55,10 @@ jobs:
         with:
           dotnet-version: ${{ steps.config.outputs.dotnet }}.x
 
+      # Start a debugging session
+      - name: Setup upterm session
+        uses: owenthereal/action-upterm@v1
+
       # Build using the unified platform script
       # All bundling and dependency installation is handled by the script
       - name: Build
