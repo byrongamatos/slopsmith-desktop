@@ -24,9 +24,6 @@ if [ ! -d "node_modules" ]; then
     npm install
 fi
 
-# Get Electron version
-ELECTRON_VERSION=$(npx electron --version 2>/dev/null | tr -d 'v' || echo "35.0.0")
-
 # Detect architecture
 ARCH=$(uname -m)
 case "$ARCH" in
@@ -41,10 +38,25 @@ case "$ARCH" in
         ;;
 esac
 
-# Set cmake-js environment variables to ensure it uses Electron headers
-export npm_config_runtime=electron
-export npm_config_target="$ELECTRON_VERSION"
-export npm_config_arch="$CMAKE_ARCH"
+# Get Electron version - trim whitespace properly for Windows
+echo "Detecting Electron version..."
+RAW_VERSION=$(npx electron --version 2>/dev/null || echo "v35.0.0")
+echo "Raw version: '$RAW_VERSION'"
+ELECTRON_VERSION=$(echo "$RAW_VERSION" | sed 's/[^0-9.]//g' | tr -d '[:space:]')
+echo "Cleaned version: '$ELECTRON_VERSION'"
+
+# Clear any cached cmake-js configuration to ensure fresh build
+if [ -d "$HOME/.cmake-js" ]; then
+    echo "Clearing cmake-js cache..."
+    rm -rf "$HOME/.cmake-js"
+fi
+
+# Set npm configuration for Electron headers
+# Using npm config instead of exports to ensure it's properly set
+npm config set runtime electron
+npm config set target "$ELECTRON_VERSION"
+npm config set arch "$CMAKE_ARCH"
+npm config set disturl https://artifacts.electronjs.org/headers/dist
 
 echo "Building audio engine..."
 echo "  Platform: $(uname -s)"
@@ -52,14 +64,13 @@ echo "  Arch: $CMAKE_ARCH"
 echo "  Electron: $ELECTRON_VERSION"
 echo "  Build type: $BUILD_TYPE"
 
-# cmake-js 7+ routes args after `--` to the BUILD step, not CONFIGURE,
-# which cmake 4.x rejects. Use --CD<VAR>=<VAL> to pass cmake cache
-# variables to the CONFIGURE step instead.
-
-# Debug: verify environment
-echo "Debug: npm_config_runtime=$npm_config_runtime"
-echo "Debug: npm_config_target=$npm_config_target"
-echo "Debug: npm_config_arch=$npm_config_arch"
+# Debug npm config
+echo ""
+echo "npm config values:"
+npm config get runtime
+npm config get target
+npm config get arch
+npm config get disturl
 
 npx cmake-js build \
     --runtime electron \
