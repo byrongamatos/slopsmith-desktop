@@ -18,6 +18,9 @@ echo "=== Slopsmith Desktop Build ==="
 echo ""
 
 # Detect platform
+# CROSS-PLATFORM NOTE: MINGW*, MSYS*, and CYGWIN* patterns must all be checked
+# to properly detect Windows environment. Git Bash sets OSTYPE to msys, but we
+# also check for MINGW and CYGWIN to cover all Windows bash environments.
 PLATFORM=""
 case "$(uname -s)" in
     Linux*)

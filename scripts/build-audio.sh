@@ -39,6 +39,9 @@ case "$ARCH" in
 esac
 
 # Get Electron version - extract just the version numbers
+# CROSS-PLATFORM NOTE: This command chain handles differences in output formatting
+# across platforms (Windows adds extra whitespace, different line endings).
+# Uses grep -oE to extract numeric pattern and head -n1 to get first match.
 echo "Detecting Electron version..."
 ELECTRON_VERSION=$(npx electron --version 2>/dev/null | grep -oE '[0-9]+([.][0-9]+)+' | head -n1 || echo "35.7.5")
 if [ -z "$ELECTRON_VERSION" ]; then
@@ -48,17 +51,24 @@ fi
 echo "  Electron version: $ELECTRON_VERSION"
 
 # Set environment variables for cmake-js
+# CROSS-PLATFORM NOTE: cmake-js looks for these CMAKE_JS_* variables internally
 export CMAKE_JS_RUNTIME="electron"
 export CMAKE_JS_RUNTIME_VERSION="$ELECTRON_VERSION"
 export CMAKE_JS_ARCH="$CMAKE_ARCH"
 
 # Also set npm_config variables for compatibility
+# CROSS-PLATFORM NOTE: These are needed because cmake-js falls back to node-gyp
+# which expects npm_config_* variables. Both sets are required for reliable
+# cross-platform builds, especially on Windows where environment handling differs.
 export npm_config_runtime="electron"
 export npm_config_target="$ELECTRON_VERSION"
 export npm_config_arch="$CMAKE_ARCH"
 export npm_config_target_arch="$CMAKE_ARCH"
 
 # Optional: clear cmake-js cache on Windows (where this matters most)
+# CROSS-PLATFORM NOTE: Only clear cache in CI environments to avoid permission
+# issues on local Windows machines. On Windows, cmake-js downloads headers to
+# a different location (C:\Users\...\.cmake-js) than on Unix systems.
 if [ -n "$CI" ] && [ -d "$HOME/.cmake-js" ]; then
     echo "Clearing cmake-js cache (CI environment)..."
     rm -rf "$HOME/.cmake-js"
