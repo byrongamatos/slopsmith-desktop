@@ -1,4 +1,5 @@
 #!/bin/bash
+
 # Build the JUCE audio engine as a Node.js native addon
 # Usage: ./scripts/build-audio.sh [debug|release]
 
@@ -6,6 +7,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+
 BUILD_TYPE="${1:-Release}"
 
 cd "$PROJECT_DIR"
@@ -28,10 +30,21 @@ ELECTRON_VERSION=$(npx electron --version 2>/dev/null | tr -d 'v' || echo "35.0.
 # Detect architecture
 ARCH=$(uname -m)
 case "$ARCH" in
-    x86_64) CMAKE_ARCH="x64" ;;
-    aarch64|arm64) CMAKE_ARCH="arm64" ;;
-    *) CMAKE_ARCH="$ARCH" ;;
+    x86_64)
+        CMAKE_ARCH="x64"
+        ;;
+    aarch64|arm64)
+        CMAKE_ARCH="arm64"
+        ;;
+    *)
+        CMAKE_ARCH="$ARCH"
+        ;;
 esac
+
+# Set cmake-js environment variables to ensure it uses Electron headers
+export npm_config_runtime=electron
+export npm_config_target="$ELECTRON_VERSION"
+export npm_config_arch="$CMAKE_ARCH"
 
 echo "Building audio engine..."
 echo "  Platform: $(uname -s)"
@@ -42,6 +55,12 @@ echo "  Build type: $BUILD_TYPE"
 # cmake-js 7+ routes args after `--` to the BUILD step, not CONFIGURE,
 # which cmake 4.x rejects. Use --CD<VAR>=<VAL> to pass cmake cache
 # variables to the CONFIGURE step instead.
+
+# Debug: verify environment
+echo "Debug: npm_config_runtime=$npm_config_runtime"
+echo "Debug: npm_config_target=$npm_config_target"
+echo "Debug: npm_config_arch=$npm_config_arch"
+
 npx cmake-js build \
     --runtime electron \
     --runtime-version "$ELECTRON_VERSION" \
