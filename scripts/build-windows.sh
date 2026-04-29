@@ -85,7 +85,7 @@ bundle_python_impl() {
 
 # Install packages
 "$PROJECT_DIR/resources/python/python.exe" -m pip install --quiet --no-cache-dir \
-        setuptools wheel $PYTHON_PACKAGES
+        setuptools wheel -r "$PROJECT_DIR/.packages/python.txt"
 }
 
 # Usage: download_with_retries <url> <output_path> <description>

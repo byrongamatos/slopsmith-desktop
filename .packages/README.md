@@ -1,85 +1,70 @@
-# Platform package lists
+# Package lists
 
-System packages required to build Slopsmith Desktop on each OS.
+System packages and Python dependencies required to build Slopsmith Desktop.
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `apt.txt` | Ubuntu/Debian system packages (apt) |
+| `brew.txt` | macOS system packages (Homebrew) |
+| `choco.txt` | Windows system packages (Chocolatey) |
+| `python.txt` | Python packages (pip) - **shared across all platforms** |
 
 ## Purpose
 
-Single source of truth for system dependencies across:
+Single source of truth for dependencies across:
 - **Local development** (via `.devcontainer/`)
 - **GitHub Actions CI** (`.github/workflows/build.yml`)
 - **Manual installation** by contributors
 
-## Files
+## Usage
 
-| File | Platform | Package manager |
-|---|---|---|
-| `apt.txt` | Ubuntu / Debian | apt |
-| `brew.txt` | macOS | Homebrew |
-| `choco.txt` | Windows | Chocolatey |
+### System packages
 
-## Format
-
-One package per line. Lines starting with `#` and blank lines are
-ignored. Consumers must strip those before piping to the package
-manager.
-
-## Consuming the lists
-
-### Shared filter snippet
-
-These lists contain comments and blank lines; a raw `xargs -a` will
-pass those to the package manager verbatim and fail (or worse, try to
-install `#` as a package). Always filter first:
+For system packages, filter out comments and blank lines before piping:
 
 ```bash
-grep -v '^[[:space:]]*#' .packages/apt.txt | grep -v '^[[:space:]]*$'
-```
-
-### GitHub Actions (Linux)
-
-```yaml
-- name: Install Linux dependencies
-  run: |
-    sudo apt-get update
-    PACKAGES=$(grep -v '^[[:space:]]*#' .packages/apt.txt | grep -v '^[[:space:]]*$' | tr '\n' ' ')
-    sudo apt-get install -y $PACKAGES
-```
-
-### GitHub Actions (macOS)
-
-```yaml
-- name: Install macOS dependencies
-  run: |
-    PACKAGES=$(grep -v '^[[:space:]]*#' .packages/brew.txt | grep -v '^[[:space:]]*$' | tr '\n' ' ')
-    brew install $PACKAGES
-```
-
-### Manual install (Ubuntu / Debian)
-
-```bash
+# Ubuntu/Debian
 grep -v '^[[:space:]]*#' .packages/apt.txt | grep -v '^[[:space:]]*$' | xargs sudo apt-get install -y
-```
 
-### Manual install (macOS)
-
-```bash
+# macOS
 grep -v '^[[:space:]]*#' .packages/brew.txt | grep -v '^[[:space:]]*$' | xargs brew install
-```
 
-### Manual install (Windows, PowerShell)
-
-```powershell
+# Windows (PowerShell)
 Get-Content .packages/choco.txt | Where-Object { $_ -notmatch '^\s*#' -and $_ -notmatch '^\s*$' } | ForEach-Object { choco install $_ -y }
 ```
 
+### Python packages
+
+The `python.txt` file is used directly by pip during the bundle step:
+
+```bash
+pip install -r .packages/python.txt
+```
+
+This file is referenced from:
+- `scripts/build-windows.sh` (Windows)
+- `scripts/build-macos.sh` (macOS)
+- `scripts/bundle-python.sh` (Linux)
+
+## Format
+
+- One package per line
+- Lines starting with `#` are comments
+- Blank lines are ignored
+- Standard `pip install -r` format for `python.txt`
+
 ## Updating
 
-When adding a system dependency:
+### Adding system dependencies
+1. Add to the appropriate `.packages/*.txt` for each OS
+2. Update `.devcontainer/` if applicable
+3. Test locally
 
-1. Add the package to the appropriate `.packages/*.txt`
-2. Update every OS's file if the package exists for all three
-3. Test locally via the DevContainer where possible
-4. Open a PR and let CI validate
+### Adding Python dependencies
+1. Add to `.packages/python.txt` (one file for all platforms)
+2. Ensure the package is available on all platforms
+3. Test builds on all three platforms
 
-Changes here affect both local builds and CI, so verify end-to-end
-before merging.
+Changes affect both local builds and CI, so verify end-to-end before merging.

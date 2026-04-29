@@ -52,7 +52,7 @@ bundle_python_impl() {
 
     # Install Python packages
     "$PROJECT_DIR/resources/python/runtime/bin/python3" -m pip install --quiet --no-cache-dir \
-        $PYTHON_PACKAGES 2>&1 | tail -5
+        -r "$PROJECT_DIR/.packages/python.txt" 2>&1 | tail -5
 }
 
 # Platform-specific: Return expected artifact patterns
