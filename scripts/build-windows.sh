@@ -9,11 +9,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -W 2>/dev/null || pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 CONFIG="$PROJECT_DIR/.build-config.json"
 
-# Platform-specific: Return expected artifact patterns
-get_expected_artifacts() {
-    printf "%s\n" "$PROJECT_DIR/release/*.exe" "$PROJECT_DIR/release/*.zip"
-}
-
 # Platform identifier
 export PLATFORM="windows"
 
@@ -36,6 +31,11 @@ export NC='\033[0m'
 
 # Source common build logic
 source "$SCRIPT_DIR/build-common.sh"
+
+# Platform-specific: Return expected artifact patterns
+get_expected_artifacts() {
+    printf "%s\n" "$PROJECT_DIR/release/*.exe" "$PROJECT_DIR/release/*.zip"
+}
 
 # Platform-specific: Install system dependencies
 install_system_deps() {
