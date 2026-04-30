@@ -83,6 +83,8 @@ bundle_binaries_impl() {
     if [[ -n "$VGM_BIN" ]]; then
         cp "$VGM_BIN" "$PROJECT_DIR/resources/bin/vgmstream-cli"
         chmod +x "$PROJECT_DIR/resources/bin/vgmstream-cli"
+  # Remove macOS quarantine attribute (downloaded binaries are quarantined by default)
+  xattr -d com.apple.quarantine "$PROJECT_DIR/resources/bin/vgmstream-cli" 2>/dev/null || true
     fi
 
     # Use dylibbundler if available (for fluidsynth dependencies)
