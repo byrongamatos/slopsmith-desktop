@@ -19,6 +19,14 @@
     "soundfont_general_user": {
       "url": "https://github.com/byrongamatos/slopsmith-desktop/releases/download/soundfonts-v1/GeneralUser-GS.sf2",
       "sha256": "9575028c7a1f589f5770fccc8cff2734566af40cd26ed836944e9a5152688cfe"
+    },
+    "python_standalone_macos_arm64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20250317/cpython-3.12.9+20250317-aarch64-apple-darwin-install_only_stripped.tar.gz",
+      "sha256": "0a4647b7df3c8eca11071d6cea68a14a4b102bd6fc6afae314e9852510654b7d"
+    },
+    "python_standalone_macos_x64": {
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20250317/cpython-3.12.9+20250317-x86_64-apple-darwin-install_only_stripped.tar.gz",
+      "sha256": "1a414bf392a7afe08c742502a82edd41893a1144ccbceb184dc5ee6ee9c069c0"
     }
   }
 }

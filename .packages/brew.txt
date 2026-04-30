@@ -17,6 +17,6 @@ fluid-synth
 speex
 
 # Used by the CI / local build to rewrite Mach-O load paths on the
-# bundled fluidsynth binary so it loads its dylibs via @executable_path
-# instead of /opt/homebrew/lib.
+# bundled fluidsynth and vgmstream-cli binaries so they load their
+# dylibs via @executable_path instead of /opt/homebrew/lib.
 dylibbundler

@@ -20,6 +20,17 @@ fi
 echo "=== Slopsmith Desktop macOS Build ==="
 echo ""
 
+# Disable electron-builder's keychain-identity auto-discovery on unsigned
+# builds. Without this, electron-builder picks the first codesigning
+# identity it finds (often an "Apple Development" cert from Xcode) and
+# tries to sign with it — which both produces unusable artifacts AND
+# fails when Slopsmith.app contains paths the Apple Development cert
+# can't sign. Signed CI builds set APPLE_SIGNING_IDENTITY / CSC_NAME, so
+# this guard only triggers for local unsigned dev builds.
+if [[ -z "${APPLE_SIGNING_IDENTITY:-}" && -z "${CSC_NAME:-}" && -z "${CSC_LINK:-}" ]]; then
+    export CSC_IDENTITY_AUTO_DISCOVERY=false
+fi
+
 # Color setup
 export RED='\033[0;31m'
 export GREEN='\033[0;32m'
@@ -44,14 +55,66 @@ install_system_deps() {
 }
 
 # Platform-specific: Bundle Python runtime
+#
+# Uses python-build-standalone (Astral) — a fully relocatable CPython
+# distribution built specifically for redistribution. Avoids every
+# hazard of trying to copy a Homebrew framework: no PEP 668 marker, no
+# install_name_tool dance, no broken site-packages symlink, sys.prefix
+# correctly resolves to the bundle's location at runtime.
 bundle_python_impl() {
-    # macOS: copy system Python installation
-    PYTHON_PREFIX=$(python3 -c "import sys; print(sys.prefix)")
-    mkdir -p "$PROJECT_DIR/resources/python"
-    cp -R "$PYTHON_PREFIX" "$PROJECT_DIR/resources/python/runtime"
+    local config_py
+    config_py=$(python3 "$SCRIPT_DIR/parse-build-config.py" "$PROJECT_DIR/.build-config.json" .versions.python)
+    local py_mm="${config_py%.*}"
 
-    # Install Python packages
-    "$PROJECT_DIR/resources/python/runtime/bin/python3" -m pip install --quiet --no-cache-dir \
+    local arch
+    arch=$(uname -m)
+    local config_key
+    case "$arch" in
+        arm64|aarch64) config_key="python_standalone_macos_arm64" ;;
+        x86_64)        config_key="python_standalone_macos_x64" ;;
+        *)
+            echo "Error: unsupported macOS arch: $arch" >&2
+            exit 1
+            ;;
+    esac
+
+    local pbs_url pbs_sha
+    pbs_url=$(python3 "$SCRIPT_DIR/parse-build-config.py" "$PROJECT_DIR/.build-config.json" ".external.${config_key}.url")
+    pbs_sha=$(python3 "$SCRIPT_DIR/parse-build-config.py" "$PROJECT_DIR/.build-config.json" ".external.${config_key}.sha256")
+
+    local runtime="$PROJECT_DIR/resources/python/runtime"
+    local tarball="/tmp/cpython-${config_py}-macos-${arch}.tar.gz"
+
+    mkdir -p "$PROJECT_DIR/resources/python"
+    rm -rf "$runtime"
+
+    if [[ ! -f "$tarball" ]] || ! shasum -a 256 "$tarball" | awk '{print $1}' | grep -qx "$pbs_sha"; then
+        echo "  Downloading python-build-standalone ${config_py} (${arch})"
+        curl -sL --fail --retry 5 --retry-delay 5 --retry-all-errors "$pbs_url" -o "$tarball"
+    fi
+    local actual_sha
+    actual_sha=$(shasum -a 256 "$tarball" | awk '{print $1}')
+    if [[ "$actual_sha" != "$pbs_sha" ]]; then
+        echo "Error: python-build-standalone tarball SHA256 mismatch" >&2
+        echo "  expected: $pbs_sha" >&2
+        echo "  got:      $actual_sha" >&2
+        exit 1
+    fi
+
+    # PBS tarballs extract to a top-level `python/` dir; rename to
+    # `runtime` so the rest of the build (and python.ts) finds the
+    # interpreter at resources/python/runtime/bin/python3.
+    local extract_dir="/tmp/pbs-extract-$$"
+    rm -rf "$extract_dir"
+    mkdir -p "$extract_dir"
+    tar -xzf "$tarball" -C "$extract_dir"
+    mv "$extract_dir/python" "$runtime"
+    rm -rf "$extract_dir"
+
+    # PBS tarballs ship a working pip pre-installed in the bundle's
+    # site-packages, and `bin/python3` is a real binary (not a symlink),
+    # so the install is fully relocatable as-is.
+    "$runtime/bin/python3" -m pip install --quiet --no-cache-dir \
         -r "$PROJECT_DIR/.packages/python.txt" 2>&1 | tail -5
 }
 
@@ -112,16 +175,25 @@ bundle_binaries_impl() {
         find /tmp/vgmstream -type f -name '*vgmstream*' 2>/dev/null || echo "  (none found)"
     fi
 
-    # Use dylibbundler if available (for fluidsynth and vgmstream-cli dependencies)
+    # Run dylibbundler on every bundled binary so each one's brew deps
+    # (libfluidsynth, libspeex, libmpg123, libvorbis, libogg, ffmpeg
+    # libs, etc.) get copied into resources/bin/ and the binaries' load
+    # commands get rewritten to @executable_path/. Without this,
+    # vgmstream-cli (downloaded from upstream) at runtime asks dyld for
+    # /opt/homebrew/opt/speex/lib/libspeex.1.dylib — fine on the dev
+    # machine, fatal on every other Mac. ffmpeg has the same problem
+    # against its own brew deps. dylibbundler is idempotent and skips
+    # paths it has already rewritten, so the per-binary loop is safe
+    # even when binaries share dylibs.
     if command -v dylibbundler &>/dev/null; then
-        if [[ -f "$PROJECT_DIR/resources/bin/fluidsynth" ]]; then
-            echo -e "${BLUE}Bundling fluidsynth dependencies...${NC}"
-            dylibbundler -cd -b -x "$PROJECT_DIR/resources/bin/fluidsynth" -d "$PROJECT_DIR/resources/bin" -p '@executable_path/'
-        fi
-        if [[ -f "$PROJECT_DIR/resources/bin/vgmstream-cli" ]]; then
-            echo -e "${BLUE}Bundling vgmstream-cli dependencies...${NC}"
-            dylibbundler -cd -b -x "$PROJECT_DIR/resources/bin/vgmstream-cli" -d "$PROJECT_DIR/resources/bin" -p '@executable_path/'
-        fi
+        for bin in fluidsynth ffmpeg vgmstream-cli; do
+            local target="$PROJECT_DIR/resources/bin/$bin"
+            [[ -f "$target" ]] || continue
+            echo -e "${BLUE}Bundling ${bin} dependencies...${NC}"
+            dylibbundler -cd -b -of -x "$target" \
+                -d "$PROJECT_DIR/resources/bin" \
+                -p '@executable_path/'
+        done
     fi
 
     # Sign all bundled native binaries with the Developer ID Application
