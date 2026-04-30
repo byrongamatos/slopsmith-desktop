@@ -126,7 +126,7 @@ bundle_binaries_impl() {
             # Bundle all binaries together to avoid duplicate library conflicts
             dylibbundler -cd -b -x "${binaries_to_bundle[0]}" \
                 $(for ((i=1; i<${#binaries_to_bundle[@]}; i++)); do echo "-x ${binaries_to_bundle[$i]}"; done) \
-                -d "$PROJECT_DIR/resources/bin" -p '@executable_path/' --overwrite
+                -d "$PROJECT_DIR/resources/bin" -p '@executable_path/' --overwrite-files
         fi
     fi
 }
