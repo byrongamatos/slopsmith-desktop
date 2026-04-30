@@ -13,6 +13,9 @@ ffmpeg
 # it installs is still named `fluidsynth`.
 fluid-synth
 
+# Audio codec library required by vgmstream-cli
+speex
+
 # Used by the CI / local build to rewrite Mach-O load paths on the
 # bundled fluidsynth binary so it loads its dylibs via @executable_path
 # instead of /opt/homebrew/lib.
