@@ -235,14 +235,15 @@ async function startup(): Promise<void> {
     // Initialize soundfont manager IPC handlers (Audio Quality preference)
     initSoundfontManager(() => mainWindow);
 
-    let port: number;
-    try {
-        // Wait for Python server to be ready
-        port = await waitForPython();
-    } catch (err) {
+    // Wait for Python server to be ready; null means the backend failed to start.
+    const port = await waitForPython().catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
         console.error('[main] Backend failed to start:', message);
         publishStartupStatus({ message: `Backend failed to start: ${message}`, phase: 'error', running: false });
+        return null;
+    });
+
+    if (port === null) {
         await new Promise((resolve) => setTimeout(resolve, SPLASH_CLOSE_DELAY_MS));
         if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
         app.quit();
