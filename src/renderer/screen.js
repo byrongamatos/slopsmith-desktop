@@ -191,16 +191,18 @@
         }
     }
 
+    function saveChainStateFromChain(chain) {
+        const typeMap = { 0: 'VST', 1: 'NAM', 2: 'IR' };
+        const items = chain.filter(s => s.type === 0 || s.type === 1 || s.type === 2).map(s => ({
+            type: typeMap[s.type] || 'VST',
+            path: s.path || '',
+            name: s.name || '',
+        }));
+        try { localStorage.setItem('slopsmith-signal-chain', JSON.stringify(items)); } catch (_) {}
+    }
+
     function saveChainState() {
-        api.getChainState().then(chain => {
-            const typeMap = { 0: 'VST', 1: 'NAM', 2: 'IR' };
-            const items = chain.filter(s => s.type === 0 || s.type === 1 || s.type === 2).map(s => ({
-                type: typeMap[s.type] || 'VST',
-                path: s.path || '',
-                name: s.name || '',
-            }));
-            localStorage.setItem('slopsmith-signal-chain', JSON.stringify(items));
-        }).catch(() => {});
+        api.getChainState().then(saveChainStateFromChain).catch(() => {});
     }
 
     function captureCurrentGainLevels() {
@@ -279,7 +281,7 @@
     // ── Signal Chain ──────────────────────────────────────────────────────────
     async function refreshChain() {
         const container = chainContainer || $('ae-chain');
-        if (!container) return;
+        if (!container) return null;
         const chain = await api.getChainState();
         container.innerHTML = '';
 
@@ -311,6 +313,7 @@
             `;
             container.appendChild(div);
         }
+        return chain;
     }
 
     // Global functions for inline onclick handlers
@@ -799,25 +802,51 @@
     window._aeMarkSongTransition = markSongTransition;
 
     /** Replace the entire native chain with a saved preset blob. Always clears first so
-     *  the previous menu/player chain is fully torn down and sounds cannot stack. */
+     *  the previous menu/player chain is fully torn down and sounds cannot stack.
+     *  On loadPreset failure the previous chain is restored (best-effort). */
     async function replaceChainWithPresetBlob(preset, logCtx = '') {
         if (!preset?.nativePreset) return false;
         const tag = '[audio-engine] replaceChainWithPresetBlob' + (logCtx ? ` (${logCtx})` : '');
+
+        // Snapshot before clearing so we can roll back on loadPreset failure.
+        let snapshot = null;
+        try { snapshot = await api.getChainState(); } catch (_) { /* best-effort */ }
+
         try {
             await api.clearChain();
             const result = await api.loadPreset(preset.nativePreset);
             // Some JUCE bridges return {success: false, error: '...'} instead of throwing.
             if (result && result.success === false) {
                 console.error(tag + ': loadPreset failed:', result.error || 'unknown error');
+                await _restoreChainSnapshot(snapshot, tag);
                 return false;
             }
             applyPresetGainLevels(preset);
-            await refreshChain();
-            saveChainState();
+            // Share the single getChainState() result between refreshChain and saveChainState
+            // to avoid two back-to-back native bridge round-trips.
+            const chain = await refreshChain();
+            if (Array.isArray(chain)) saveChainStateFromChain(chain);
+            else saveChainState();
             return true;
         } catch (e) {
             console.error(tag + ':', e);
+            await _restoreChainSnapshot(snapshot, tag);
             return false;
+        }
+    }
+
+    async function _restoreChainSnapshot(snapshot, tag) {
+        if (!Array.isArray(snapshot) || snapshot.length === 0) return;
+        try {
+            await api.clearChain();
+            for (const s of snapshot) {
+                if (s.type === 0 && s.path) await api.loadVST(s.path);
+                else if (s.type === 1 && s.path) await api.loadNAMModel(s.path);
+                else if (s.type === 2 && s.path) await api.loadIR(s.path);
+            }
+            await refreshChain();
+        } catch (e) {
+            console.warn((tag || '[audio-engine]') + ' snapshot rollback failed:', e);
         }
     }
 
@@ -1196,6 +1225,9 @@
                     ? names
                     : tones.map(t => (t?.name || t?.key || '').trim()).filter(Boolean));
             const deduped = Array.from(new Set(finalNames));
+            if (originalToneNamesCache.size >= 200) {
+                originalToneNamesCache.delete(originalToneNamesCache.keys().next().value);
+            }
             originalToneNamesCache.set(cacheKey, deduped);
             return deduped;
         } catch (e) {
