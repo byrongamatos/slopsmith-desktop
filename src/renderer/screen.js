@@ -825,8 +825,9 @@
                 console.error(tag + ': loadPreset failed:', result.error || 'unknown error');
                 await _restorePresetBlob(snapshotBlob, tag);
                 if (!snapshotBlob) {
-                    // No rollback available; chain is now empty — sync localStorage to match.
+                    // No rollback available; chain is now empty — sync localStorage and UI to match.
                     try { localStorage.setItem('slopsmith-signal-chain', '[]'); } catch (_) {}
+                    _renderEmptyChain();
                 }
                 return false;
             }
@@ -841,18 +842,31 @@
             console.error(tag + ':', e);
             await _restorePresetBlob(snapshotBlob, tag);
             if (!snapshotBlob) {
-                // No rollback available; chain is now empty — sync localStorage to match.
+                // No rollback available; chain is now empty — sync localStorage and UI to match.
                 try { localStorage.setItem('slopsmith-signal-chain', '[]'); } catch (_) {}
+                _renderEmptyChain();
             }
             return false;
         }
+    }
+
+    function _renderEmptyChain() {
+        const container = chainContainer || $('ae-chain');
+        if (container) container.innerHTML = '<div class="text-sm text-slate-500 italic">No processors loaded — add a VST, NAM model, or cabinet IR</div>';
     }
 
     async function _restorePresetBlob(snapshotBlob, tag) {
         if (!snapshotBlob) return;
         try {
             await api.clearChain();
-            await api.loadPreset(snapshotBlob);
+            const result = await api.loadPreset(snapshotBlob);
+            // Some JUCE bridges return {success:false} instead of throwing.
+            if (result && result.success === false) {
+                console.warn((tag || '[audio-engine]') + ' snapshot rollback loadPreset failed:', result.error || 'unknown');
+                try { localStorage.setItem('slopsmith-signal-chain', '[]'); } catch (_) {}
+                _renderEmptyChain();
+                return;
+            }
             await refreshChain();
         } catch (e) {
             console.warn((tag || '[audio-engine]') + ' snapshot rollback failed:', e);
