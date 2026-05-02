@@ -75,6 +75,8 @@ function createSplashWindow(): void {
             preload: path.join(__dirname, 'splash-preload.js'),
             nodeIntegration: false,
             contextIsolation: true,
+            // sandbox must be false so the preload script can require('electron')
+            // (ipcRenderer). contextIsolation: true keeps the renderer isolated.
             sandbox: false,
         },
     });
