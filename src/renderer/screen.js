@@ -159,7 +159,14 @@
         const _defaultPresetName = getDefaultPresetName();
         const _hasDefaultPreset = !!(_defaultPresetName && getPresets()[_defaultPresetName]);
         if (!_hasDefaultPreset) {
-            const savedChain = JSON.parse(localStorage.getItem('slopsmith-signal-chain') || '[]');
+            let savedChain;
+            try {
+                savedChain = JSON.parse(localStorage.getItem('slopsmith-signal-chain') || '[]');
+                if (!Array.isArray(savedChain)) savedChain = [];
+            } catch (e) {
+                console.warn('[audio-engine] Corrupted slopsmith-signal-chain; starting empty:', e);
+                savedChain = [];
+            }
             for (const item of savedChain) {
                 try {
                     if (item.type === 'VST' && item.path) {
@@ -817,7 +824,10 @@
             return false;
         }
         const presets = getPresets();
-        const defaultName = ensureDefaultPresetName();
+        // Use getDefaultPresetName (not ensureDefaultPresetName) so we only load when the user
+        // has *explicitly* configured a default — ensureDefaultPresetName auto-promotes the first
+        // preset, which would silently replace a freshly restored chain on every startup.
+        const defaultName = getDefaultPresetName();
         if (!defaultName || !presets[defaultName]) return false;
         const preset = presets[defaultName];
         if (!(await replaceChainWithPresetBlob(preset, `default:${defaultName}`))) return false;
@@ -1114,6 +1124,9 @@
     window._aeFindMappingForTone = findMappingForTone;
     window._aeResolveTonePresetName = resolveTonePresetName;
     window._aeGetOriginalToneNamesForCurrentArrangement = getOriginalToneNamesForCurrentArrangement;
+    window._aeNormalizeSongKey = normalizeSongKey;
+    window._aeGetCurrentSongKey = getCurrentSongKey;
+    window._aeGetToneChangeTime = getToneChangeTime;
 
     async function getOriginalToneNamesForCurrentArrangement(songKey) {
         const key = normalizeSongKey(songKey);
@@ -1598,9 +1611,14 @@
             const switcher = window._toneSwitcher;
             const taOn = !!window._aeToneAutomation?.isEnabled?.();
 
-            const tNum = (hw && typeof hw.getTime === 'function') ? hw.getTime() : 0;
-            const changes = (hw && hw.getToneChanges) ? hw.getToneChanges() : [];
-            const base = (hw && hw.getToneBase) ? hw.getToneBase() : '';
+            let tNum = 0, changes = [], base = '';
+            try {
+                tNum = (hw && typeof hw.getTime === 'function') ? hw.getTime() : 0;
+                changes = (hw && hw.getToneChanges) ? hw.getToneChanges() : [];
+                base = (hw && hw.getToneBase) ? hw.getToneBase() : '';
+            } catch (e) {
+                // Highway not ready or threw; use empty tone data for this tick
+            }
             const timelineTone = getActiveToneAtTime(tNum, changes, base);
             const switcherTone = String(switcher?.activeTone || '').trim();
             const activeTone = switcherTone || timelineTone || '';
@@ -2200,30 +2218,15 @@
     /** Song + arrangement — invalidates preload when switching Lead/Bass/etc. on the same file */
     let _preloadedToneCacheKey = null;
 
-    function normalizeSongKey(raw) {
-        return String(raw || '')
-            .replace(/\\/g, '/')
-            .trim();
-    }
-
-    function getCurrentSongKey() {
-        const current = normalizeSongKey(window._currentSongFile);
-        if (current) {
-            window._slopsmithSongKey = current;
-            return current;
-        }
-        return normalizeSongKey(window._slopsmithSongKey || document.title || '');
-    }
+    // Reuse helpers from the audio-API IIFE — avoids duplicate implementations drifting apart.
+    const normalizeSongKey = window._aeNormalizeSongKey || ((raw) => String(raw || '').replace(/\\/g, '/').trim());
+    const getCurrentSongKey = window._aeGetCurrentSongKey || (() => normalizeSongKey(window._currentSongFile || window._slopsmithSongKey || ''));
+    const getToneChangeTime = window._aeGetToneChangeTime || ((tc) => { const t = tc?.t ?? tc?.time ?? tc?.timestamp ?? tc?.at; return Number.isFinite(t) ? t : Infinity; });
 
     function getTonePreloadCacheKey() {
         const sk = getCurrentSongKey();
         const arr = String(window.slopsmith?.currentSong?.arrangement || '').trim().toLowerCase();
         return `${sk}::${arr}`;
-    }
-
-    function getToneChangeTime(tc) {
-        const t = tc?.t ?? tc?.time ?? tc?.timestamp ?? tc?.at;
-        return Number.isFinite(t) ? t : Infinity;
     }
 
     function showToneToast(name) {
