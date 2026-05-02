@@ -21,6 +21,9 @@ process.on('unhandledRejection', (reason, promise) => {
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
+// Set to true when the user initiates a quit so the startup-status polling
+// loop can break out early instead of waiting for the 5-minute deadline.
+let appQuitting = false;
 // Milliseconds to keep the splash visible after reaching a terminal state so
 // the renderer has time to paint the final status message before the window closes.
 const SPLASH_CLOSE_DELAY_MS = 300;
@@ -252,8 +255,9 @@ async function startup(): Promise<void> {
 
     const startupDeadline = Date.now() + 300000; // 5 minutes
     let reachedTerminalState = false;
-    while (Date.now() < startupDeadline) {
+    while (Date.now() < startupDeadline && !appQuitting) {
         const status = await getStartupStatus();
+        if (appQuitting) break;
         if (status) {
             publishStartupStatus(status);
             if (!status.running && (status.phase === 'complete' || status.phase === 'error')) {
@@ -263,7 +267,7 @@ async function startup(): Promise<void> {
         }
         await new Promise((resolve) => setTimeout(resolve, 700));
     }
-    if (!reachedTerminalState) {
+    if (!reachedTerminalState && !appQuitting) {
         publishStartupStatus({ message: 'Startup timed out', phase: 'error', running: false });
     }
     // Give the renderer a tick to paint the final status before closing
@@ -280,6 +284,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+    appQuitting = true;
     shutdown();
 });
 
