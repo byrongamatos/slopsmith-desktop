@@ -18,7 +18,30 @@ export function getPythonPort(): number {
     return serverPort;
 }
 
-function getJson(pathname: string, timeoutMs = 2000): Promise<any | null> {
+export interface StartupStatus {
+    running: boolean;
+    phase: string;
+    message: string;
+    current_plugin: string;
+    loaded: number;
+    total: number;
+    error?: string | null;
+}
+
+function isStartupStatus(value: unknown): value is StartupStatus {
+    if (typeof value !== 'object' || value === null) return false;
+    const v = value as Record<string, unknown>;
+    return (
+        typeof v['running'] === 'boolean' &&
+        typeof v['phase'] === 'string' &&
+        typeof v['message'] === 'string' &&
+        typeof v['current_plugin'] === 'string' &&
+        typeof v['loaded'] === 'number' &&
+        typeof v['total'] === 'number'
+    );
+}
+
+function getJson(pathname: string, timeoutMs = 2000): Promise<unknown> {
     return new Promise((resolve) => {
         const req = http.get(`http://127.0.0.1:${serverPort}${pathname}`, (res) => {
             let raw = '';
@@ -339,8 +362,9 @@ export async function waitForPython(): Promise<number> {
     throw new Error(`Python server failed to start on port ${serverPort} within ${(maxAttempts * intervalMs) / 1000}s`);
 }
 
-export async function getStartupStatus(): Promise<any | null> {
-    return getJson('/api/startup-status');
+export async function getStartupStatus(): Promise<StartupStatus | null> {
+    const data = await getJson('/api/startup-status');
+    return isStartupStatus(data) ? data : null;
 }
 
 export function stopPython(): void {

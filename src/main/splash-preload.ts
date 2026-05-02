@@ -3,11 +3,23 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+type StartupStatus = {
+    running: boolean;
+    phase: string;
+    message: string;
+    current_plugin: string;
+    loaded: number;
+    total: number;
+    error?: string | null;
+};
+
 contextBridge.exposeInMainWorld('splashBridge', {
-    onStatus: (callback: (status: Record<string, unknown>) => void): (() => void) => {
-        const listener = (_event: unknown, status: Record<string, unknown>) => callback(status);
+    onStatus: (callback: (status: StartupStatus) => void): (() => void) => {
+        const listener = (_event: unknown, status: StartupStatus) => callback(status);
         ipcRenderer.on('startup:status', listener);
         ipcRenderer.send('startup:requestStatus');
         return () => ipcRenderer.removeListener('startup:status', listener);
     },
 });
+
+export {};

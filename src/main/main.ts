@@ -3,7 +3,7 @@
 
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import * as path from 'path';
-import { startPython, stopPython, waitForPython, getPythonPort, getStartupStatus } from './python';
+import { startPython, stopPython, waitForPython, getPythonPort, getStartupStatus, StartupStatus } from './python';
 import { initAudioBridge, shutdownAudio } from './audio-bridge';
 import { initPluginManager } from './plugin-manager';
 import { initSoundfontManager } from './soundfont-manager';
@@ -21,7 +21,7 @@ process.on('unhandledRejection', (reason, promise) => {
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
-let startupStatusSnapshot: Record<string, unknown> = {
+let startupStatusSnapshot: StartupStatus = {
     running: true,
     phase: 'booting',
     message: 'Starting Slopsmith...',
@@ -38,7 +38,7 @@ function getResourcesPath(): string {
         : path.join(__dirname, '..', '..');
 }
 
-function publishStartupStatus(status: Record<string, unknown>): void {
+function publishStartupStatus(status: Partial<StartupStatus>): void {
     startupStatusSnapshot = { ...startupStatusSnapshot, ...status };
     if (splashWindow && !splashWindow.isDestroyed()) {
         splashWindow.webContents.send('startup:status', startupStatusSnapshot);
@@ -281,11 +281,9 @@ async function startup(): Promise<void> {
     let reachedTerminalState = false;
     while (Date.now() < startupDeadline) {
         const status = await getStartupStatus();
-        if (status && typeof status === 'object') {
-            publishStartupStatus(status as Record<string, unknown>);
-            const phase = String((status as Record<string, unknown>).phase || '');
-            const running = Boolean((status as Record<string, unknown>).running);
-            if (!running && (phase === 'complete' || phase === 'error')) {
+        if (status) {
+            publishStartupStatus(status);
+            if (!status.running && (status.phase === 'complete' || status.phase === 'error')) {
                 reachedTerminalState = true;
                 break;
             }
@@ -295,6 +293,8 @@ async function startup(): Promise<void> {
     if (!reachedTerminalState) {
         publishStartupStatus({ message: 'Startup timed out', phase: 'error', running: false });
     }
+    // Give the renderer a tick to paint the final status before closing
+    await new Promise((resolve) => setTimeout(resolve, 300));
     if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
 
 }

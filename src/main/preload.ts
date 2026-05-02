@@ -4,6 +4,16 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+type StartupStatus = {
+    running: boolean;
+    phase: string;
+    message: string;
+    current_plugin: string;
+    loaded: number;
+    total: number;
+    error?: string | null;
+};
+
 // Audio sync offset — set as a mutable property via the isolated world bridge.
 // The settings panel reads/writes localStorage and updates this at runtime.
 
@@ -124,27 +134,13 @@ contextBridge.exposeInMainWorld('slopsmithDesktop', {
     // Startup status
     startup: {
         getStatus: () => ipcRenderer.invoke('startup:getStatus'),
-        onStatus: (callback: (status: {
-            running: boolean;
-            phase: string;
-            message: string;
-            current_plugin: string;
-            loaded: number;
-            total: number;
-            error?: string | null;
-        }) => void) => {
-            const listener = (_event: unknown, status: {
-                running: boolean;
-                phase: string;
-                message: string;
-                current_plugin: string;
-                loaded: number;
-                total: number;
-                error?: string | null;
-            }) => callback(status);
+        onStatus: (callback: (status: StartupStatus) => void) => {
+            const listener = (_event: unknown, status: StartupStatus) => callback(status);
             ipcRenderer.on('startup:status', listener);
             ipcRenderer.send('startup:requestStatus');
             return () => ipcRenderer.removeListener('startup:status', listener);
         },
     },
 });
+
+export {};
