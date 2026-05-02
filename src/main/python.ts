@@ -22,13 +22,25 @@ export interface StartupStatus {
     running: boolean;
     phase: string;
     message: string;
+    /** Name of the plugin currently being loaded (camelCase, mapped from backend `current_plugin`). */
+    currentPlugin: string;
+    loaded: number;
+    total: number;
+    error?: string | null;
+}
+
+/** Shape of the raw JSON returned by the backend `/api/startup-status` endpoint. */
+interface RawStartupStatus {
+    running: boolean;
+    phase: string;
+    message: string;
     current_plugin: string;
     loaded: number;
     total: number;
     error?: string | null;
 }
 
-function isStartupStatus(value: unknown): value is StartupStatus {
+function isRawStartupStatus(value: unknown): value is RawStartupStatus {
     if (typeof value !== 'object' || value === null) return false;
     const v = value as Record<string, unknown>;
     return (
@@ -365,7 +377,16 @@ export async function waitForPython(): Promise<number> {
 
 export async function getStartupStatus(): Promise<StartupStatus | null> {
     const data = await getJson('/api/startup-status');
-    return isStartupStatus(data) ? data : null;
+    if (!isRawStartupStatus(data)) return null;
+    return {
+        running: data.running,
+        phase: data.phase,
+        message: data.message,
+        currentPlugin: data.current_plugin,
+        loaded: data.loaded,
+        total: data.total,
+        error: data.error,
+    };
 }
 
 export function stopPython(): void {

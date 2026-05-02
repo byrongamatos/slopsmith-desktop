@@ -4,6 +4,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import * as path from 'path';
 import { startPython, stopPython, waitForPython, getPythonPort, getStartupStatus, StartupStatus } from './python';
+import { IPC_STARTUP_STATUS, IPC_STARTUP_GET_STATUS, IPC_STARTUP_REQUEST_STATUS } from './ipc-channels';
 import { initAudioBridge, shutdownAudio } from './audio-bridge';
 import { initPluginManager } from './plugin-manager';
 import { initSoundfontManager } from './soundfont-manager';
@@ -27,11 +28,15 @@ let appQuitting = false;
 // Milliseconds to keep the splash visible after reaching a terminal state so
 // the renderer has time to paint the final status message before the window closes.
 const SPLASH_CLOSE_DELAY_MS = 300;
+/** Total time budget for the plugin-startup polling loop. */
+const STARTUP_DEADLINE_MS = 300_000; // 5 minutes (300 000 ms)
+/** How often to poll /api/startup-status during the startup loop. */
+const STARTUP_POLL_INTERVAL_MS = 700;
 let startupStatusSnapshot: StartupStatus = {
     running: true,
     phase: 'booting',
     message: 'Starting Slopsmith...',
-    current_plugin: '',
+    currentPlugin: '',
     loaded: 0,
     total: 0,
     error: null,
@@ -47,10 +52,10 @@ function getResourcesPath(): string {
 function publishStartupStatus(status: Partial<StartupStatus>): void {
     startupStatusSnapshot = { ...startupStatusSnapshot, ...status };
     if (splashWindow && !splashWindow.isDestroyed()) {
-        splashWindow.webContents.send('startup:status', startupStatusSnapshot);
+        splashWindow.webContents.send(IPC_STARTUP_STATUS, startupStatusSnapshot);
     }
     if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('startup:status', startupStatusSnapshot);
+        mainWindow.webContents.send(IPC_STARTUP_STATUS, startupStatusSnapshot);
     }
 }
 
@@ -172,9 +177,9 @@ async function startup(): Promise<void> {
 
     // Register startup status IPC handlers before creating the splash window
     // so the splash preload's immediate startup:requestStatus is handled.
-    ipcMain.handle('startup:getStatus', () => startupStatusSnapshot);
-    ipcMain.on('startup:requestStatus', (event) => {
-        event.sender.send('startup:status', startupStatusSnapshot);
+    ipcMain.handle(IPC_STARTUP_GET_STATUS, () => startupStatusSnapshot);
+    ipcMain.on(IPC_STARTUP_REQUEST_STATUS, (event) => {
+        event.sender.send(IPC_STARTUP_STATUS, startupStatusSnapshot);
     });
 
     createSplashWindow();
@@ -253,7 +258,7 @@ async function startup(): Promise<void> {
         return app.getPath('userData');
     });
 
-    const startupDeadline = Date.now() + 300000; // 5 minutes
+    const startupDeadline = Date.now() + STARTUP_DEADLINE_MS;
     let reachedTerminalState = false;
     while (Date.now() < startupDeadline && !appQuitting) {
         const status = await getStartupStatus();
@@ -265,7 +270,7 @@ async function startup(): Promise<void> {
                 break;
             }
         }
-        await new Promise((resolve) => setTimeout(resolve, 700));
+        await new Promise((resolve) => setTimeout(resolve, STARTUP_POLL_INTERVAL_MS));
     }
     if (!reachedTerminalState && !appQuitting) {
         publishStartupStatus({ message: 'Startup timed out', phase: 'error', running: false });
