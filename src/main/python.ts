@@ -56,19 +56,26 @@ function isRawStartupStatus(value: unknown): value is RawStartupStatus {
 
 function getJson(pathname: string, timeoutMs = 2000): Promise<unknown> {
     return new Promise((resolve) => {
+        let settled = false;
+        const done = (value: unknown) => { if (!settled) { settled = true; resolve(value); } };
+
         const req = http.get(`http://127.0.0.1:${serverPort}${pathname}`, (res) => {
             let raw = '';
             res.on('data', (chunk) => { raw += chunk.toString(); });
             res.on('end', () => {
                 try {
-                    resolve(JSON.parse(raw));
+                    done(JSON.parse(raw));
                 } catch {
-                    resolve(null);
+                    done(null);
                 }
             });
+            // Guard against mid-transfer stream errors (e.g. connection reset).
+            // Without this, Node emits an unhandled 'error' event that crashes
+            // the main process, or the promise never resolves.
+            res.on('error', () => done(null));
         });
-        req.on('error', () => resolve(null));
-        req.setTimeout(timeoutMs, () => { req.destroy(); resolve(null); });
+        req.on('error', () => done(null));
+        req.setTimeout(timeoutMs, () => { req.destroy(); done(null); });
     });
 }
 
