@@ -802,15 +802,21 @@
      *  the previous menu/player chain is fully torn down and sounds cannot stack. */
     async function replaceChainWithPresetBlob(preset, logCtx = '') {
         if (!preset?.nativePreset) return false;
+        const tag = '[audio-engine] replaceChainWithPresetBlob' + (logCtx ? ` (${logCtx})` : '');
         try {
             await api.clearChain();
-            await api.loadPreset(preset.nativePreset);
+            const result = await api.loadPreset(preset.nativePreset);
+            // Some JUCE bridges return {success: false, error: '...'} instead of throwing.
+            if (result && result.success === false) {
+                console.error(tag + ': loadPreset failed:', result.error || 'unknown error');
+                return false;
+            }
             applyPresetGainLevels(preset);
             await refreshChain();
             saveChainState();
             return true;
         } catch (e) {
-            console.error('[audio-engine] replaceChainWithPresetBlob' + (logCtx ? ` (${logCtx})` : '') + ':', e);
+            console.error(tag + ':', e);
             return false;
         }
     }
@@ -928,7 +934,7 @@
     let toneSwitcher = null;
     let toneMonitorInterval = null;
     let autoSwitchEnabled = localStorage.getItem('slopsmith-tone-auto-switch') === 'true';
-    const originalToneNamesCache = {};
+    const originalToneNamesCache = new Map();
 
     class ToneSwitcher {
         constructor() {
@@ -1171,7 +1177,7 @@
         const arr = String(arrangementName || '').trim().toLowerCase();
         if (!key) return [];
         const cacheKey = `${key}::${arr}::v2`;
-        if (originalToneNamesCache[cacheKey]) return originalToneNamesCache[cacheKey];
+        if (originalToneNamesCache.has(cacheKey)) return originalToneNamesCache.get(cacheKey);
         try {
             const resp = await fetch(`/api/plugins/midi_amp/song-tones/${encodeURIComponent(key)}`);
             if (!resp.ok) return [];
@@ -1189,8 +1195,9 @@
                 : (names.length > 0
                     ? names
                     : tones.map(t => (t?.name || t?.key || '').trim()).filter(Boolean));
-            originalToneNamesCache[cacheKey] = Array.from(new Set(finalNames));
-            return originalToneNamesCache[cacheKey];
+            const deduped = Array.from(new Set(finalNames));
+            originalToneNamesCache.set(cacheKey, deduped);
+            return deduped;
         } catch (e) {
             return [];
         }
