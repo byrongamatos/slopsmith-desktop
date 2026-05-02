@@ -154,22 +154,27 @@
             }
         }
 
-        // Restore saved signal chain (VSTs, NAM models, IRs)
-        const savedChain = JSON.parse(localStorage.getItem('slopsmith-signal-chain') || '[]');
-        for (const item of savedChain) {
-            try {
-                if (item.type === 'VST' && item.path) {
-                    await api.loadVST(item.path);
-                } else if (item.type === 'NAM' && item.path) {
-                    await api.loadNAMModel(item.path);
-                } else if (item.type === 'IR' && item.path) {
-                    await api.loadIR(item.path);
+        // Skip restoring the saved chain when a default preset is configured — the
+        // preset will replace the chain immediately, making the restore redundant load/unload work.
+        const _defaultPresetName = getDefaultPresetName();
+        const _hasDefaultPreset = !!(_defaultPresetName && getPresets()[_defaultPresetName]);
+        if (!_hasDefaultPreset) {
+            const savedChain = JSON.parse(localStorage.getItem('slopsmith-signal-chain') || '[]');
+            for (const item of savedChain) {
+                try {
+                    if (item.type === 'VST' && item.path) {
+                        await api.loadVST(item.path);
+                    } else if (item.type === 'NAM' && item.path) {
+                        await api.loadNAMModel(item.path);
+                    } else if (item.type === 'IR' && item.path) {
+                        await api.loadIR(item.path);
+                    }
+                } catch (e) {
+                    console.error('[audio-engine] Failed to restore chain item:', item, e);
                 }
-            } catch (e) {
-                console.error('[audio-engine] Failed to restore chain item:', item, e);
             }
+            if (savedChain.length > 0) await refreshChain();
         }
-        if (savedChain.length > 0) await refreshChain();
         await loadDefaultPreset('app-init');
     }
 
@@ -824,6 +829,7 @@
         return true;
     }
 
+    window._aeGetPresets = getPresets;
     window._aeLoadDefaultPreset = loadDefaultPreset;
     window._aeReplaceChainWithPresetBlob = replaceChainWithPresetBlob;
 
@@ -864,12 +870,13 @@
         for (const name of names) {
             const div = document.createElement('div');
             div.className = 'flex items-center gap-2 p-2 rounded bg-slate-800/50 text-sm';
+            const eName = escHtml(name);
             div.innerHTML = `
-                <span class="flex-1 text-slate-300">${name}${name === defaultPresetName ? ' <span class="text-xs text-slate-500">(default)</span>' : ''}</span>
-                <span class="text-xs text-slate-500">${presets[name].items.length} processors</span>
-                <button class="text-xs px-2 py-1 rounded ${name === defaultPresetName ? 'bg-blue-700/60 text-slate-300 cursor-not-allowed' : 'bg-blue-600/50 hover:bg-blue-500'}" data-preset="${name}" data-action="default" ${name === defaultPresetName ? 'disabled' : ''}>Default</button>
-                <button class="text-xs px-2 py-1 rounded bg-emerald-600/50 hover:bg-emerald-500" data-preset="${name}" data-action="load">Load</button>
-                <button class="text-xs px-2 py-1 rounded bg-red-600/50 hover:bg-red-500" data-preset="${name}" data-action="delete">Del</button>
+                <span class="flex-1 text-slate-300">${eName}${name === defaultPresetName ? ' <span class="text-xs text-slate-500">(default)</span>' : ''}</span>
+                <span class="text-xs text-slate-500">${getPresetItems(presets[name]).length} processors</span>
+                <button class="text-xs px-2 py-1 rounded ${name === defaultPresetName ? 'bg-blue-700/60 text-slate-300 cursor-not-allowed' : 'bg-blue-600/50 hover:bg-blue-500'}" data-preset="${eName}" data-action="default" ${name === defaultPresetName ? 'disabled' : ''}>Default</button>
+                <button class="text-xs px-2 py-1 rounded bg-emerald-600/50 hover:bg-emerald-500" data-preset="${eName}" data-action="load">Load</button>
+                <button class="text-xs px-2 py-1 rounded bg-red-600/50 hover:bg-red-500" data-preset="${eName}" data-action="delete">Del</button>
             `;
             div.querySelector('[data-action="default"]').addEventListener('click', () => {
                 setDefaultPresetName(name);
@@ -906,8 +913,9 @@
 
     class ToneSwitcher {
         constructor() {
-            this.toneSlotMap = {};  // { toneName: [slotId, ...] }
-            this.tonePresetMap = {}; // { toneName: preset }
+            this.toneSlotMap = {};      // { toneName: [slotId, ...] }
+            this.tonePresetMap = {};    // { toneName: preset }
+            this.tonePresetNameMap = {}; // { toneName: presetName } — parallel map for O(1) name lookup
             this.activeTone = null;
         }
 
@@ -934,6 +942,7 @@
             const presets = getPresets();
             this.toneSlotMap = {};
             this.tonePresetMap = {};
+            this.tonePresetNameMap = {};
             this.activeTone = null;
 
             // Clear chain first
@@ -965,6 +974,7 @@
                 }
                 this.toneSlotMap[toneName] = slotIds;
                 this.tonePresetMap[toneName] = preset;
+                this.tonePresetNameMap[toneName] = presetName;
 
                 // Bypass everything except the initial tone
                 if (toneName !== effectiveBase) {
@@ -1004,6 +1014,7 @@
         async teardown() {
             this.toneSlotMap = {};
             this.tonePresetMap = {};
+            this.tonePresetNameMap = {};
             this.activeTone = null;
         }
     }
@@ -1102,6 +1113,7 @@
 
     window._aeFindMappingForTone = findMappingForTone;
     window._aeResolveTonePresetName = resolveTonePresetName;
+    window._aeGetOriginalToneNamesForCurrentArrangement = getOriginalToneNamesForCurrentArrangement;
 
     async function getOriginalToneNamesForCurrentArrangement(songKey) {
         const key = normalizeSongKey(songKey);
@@ -1597,14 +1609,10 @@
             if (switcher) {
                 if (switcher.activePreset) {
                     presetName = String(switcher.activePreset);
-                } else if (switcher.tonePresetMap && activeTone && switcher.tonePresetMap[activeTone]) {
-                    const p = switcher.tonePresetMap[activeTone];
-                    if (p && typeof p === 'object') {
-                        const presets = getPresets();
-                        for (const [name, entry] of Object.entries(presets)) {
-                            if (entry === p) { presetName = name; break; }
-                        }
-                    }
+                } else if (switcher.tonePresetNameMap && activeTone && switcher.tonePresetNameMap[activeTone]) {
+                    // Use the name map directly — getPresets() re-parses JSON on every call so
+                    // object-reference equality against tonePresetMap entries never matches.
+                    presetName = switcher.tonePresetNameMap[activeTone];
                 }
             }
             if (!presetName && taOn && activeTone) {
@@ -2482,10 +2490,10 @@
                 const mappings = { ...(allMappingsData.global || {}), ...(allMappingsData.songs?.[songKey] || {}) };
                 if (Object.keys(mappings).length === 0) return;
 
-                const presets = JSON.parse(localStorage.getItem('slopsmith-chain-presets') || '{}');
+                const presets = window._aeGetPresets ? window._aeGetPresets() : {};
                 const hasTimelineToneData = toneChanges.length > 0 || !!toneBase;
                 if (!hasTimelineToneData) {
-                    const toneNames = await getOriginalToneNamesForCurrentArrangement(songKey);
+                    const toneNames = await window._aeGetOriginalToneNamesForCurrentArrangement?.(songKey) ?? [];
                     const lookup = (name) => (window._aeResolveTonePresetName
                         ? window._aeResolveTonePresetName(mappings, name)
                         : ((window._aeFindMappingForTone ? window._aeFindMappingForTone(mappings, name) : mappings[name]) || mappings['$default']));
