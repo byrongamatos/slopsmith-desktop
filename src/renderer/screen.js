@@ -963,8 +963,8 @@
                 localStorage.setItem('slopsmith-chain-presets', JSON.stringify(ps));
                 const deletedWasDefault = getDefaultPresetName() === name;
                 if (deletedWasDefault) {
-                    const nextNames = Object.keys(ps);
-                    setDefaultPresetName(nextNames.length > 0 ? nextNames[0] : '');
+                    // Clear rather than auto-promote — the default should only be set explicitly.
+                    setDefaultPresetName('');
                 }
                 // Scrub any Tone Automation targets that reference the deleted preset so
                 // automation doesn't silently resolve to a non-existent preset.
@@ -1374,7 +1374,13 @@
         const toneChanges = normalized.toneChanges;
         const toneBase = normalized.toneBase;
         const mappings = getToneMappings(songKey);
-        if (Object.keys(mappings).length === 0) return;
+        if (Object.keys(mappings).length === 0) {
+            // No mappings for this song — tear down any switcher/monitor left over from a
+            // previous arrangement so it doesn't keep acting on stale tone-change data.
+            window._toneSwitcher = null;
+            window._aeStopToneMonitor?.();
+            return;
+        }
         if (toneChanges.length === 0 && !toneBase) {
             // Songs without tone automation: apply the selected tone mapping directly.
             const arrangementToneNames = normalized.originalNames.length > 0
@@ -2394,6 +2400,10 @@
     }
 
     window._aeStartToneAutoSwitch = function() { startToneAutoSwitch(); };
+    window._aeStopToneMonitor = function() {
+        if (_toneMonitor) { clearInterval(_toneMonitor); _toneMonitor = null; }
+        window._toneAutoSwitchActive = false;
+    };
 
     function startToneAutoSwitch() {
         if (_toneMonitor) clearInterval(_toneMonitor);
