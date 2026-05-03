@@ -64,6 +64,7 @@ public:
     void stopBacking();
     bool isBackingPlaying() const { return backingPlaying.load(); }
     double getBackingPosition() const;
+    double getBackingDuration() const;
 
     // Metering (read from any thread — atomic)
     float getInputLevel() const { return currentInputLevel.load(); }

@@ -362,6 +362,13 @@ double AudioEngine::getBackingPosition() const
     return 0.0;
 }
 
+double AudioEngine::getBackingDuration() const
+{
+    if (backingTransport)
+        return backingTransport->getLengthInSeconds();
+    return 0.0;
+}
+
 void AudioEngine::resetPeaks()
 {
     inputPeak.store(0.0f);

@@ -222,6 +222,9 @@ export function initAudioBridge(mainWindow: BrowserWindow | null): void {
     ipcMain.handle('audio:startBacking', () => audio?.startBacking());
     ipcMain.handle('audio:stopBacking', () => audio?.stopBacking());
     ipcMain.handle('audio:seekBacking', (_event, seconds: number) => audio?.seekBacking(seconds));
+    ipcMain.handle('audio:getBackingPosition', () => audio?.getBackingPosition() ?? 0);
+    ipcMain.handle('audio:getBackingDuration', () => audio?.getBackingDuration() ?? 0);
+    ipcMain.handle('audio:isBackingPlaying',   () => audio?.isBackingPlaying() ?? false);
 
     // ── Presets ────────────────────────────────────────────────────────────
 

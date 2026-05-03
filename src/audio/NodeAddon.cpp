@@ -845,6 +845,24 @@ static Napi::Value SeekBacking(const Napi::CallbackInfo& info)
     return info.Env().Undefined();
 }
 
+static Napi::Value GetBackingPosition(const Napi::CallbackInfo& info)
+{
+    double pos = engine ? engine->getBackingPosition() : 0.0;
+    return Napi::Number::New(info.Env(), pos);
+}
+
+static Napi::Value GetBackingDuration(const Napi::CallbackInfo& info)
+{
+    double dur = engine ? engine->getBackingDuration() : 0.0;
+    return Napi::Number::New(info.Env(), dur);
+}
+
+static Napi::Value IsBackingPlaying(const Napi::CallbackInfo& info)
+{
+    bool playing = engine ? engine->isBackingPlaying() : false;
+    return Napi::Boolean::New(info.Env(), playing);
+}
+
 // ── Presets ───────────────────────────────────────────────────────────────────
 
 static Napi::Value SavePreset(const Napi::CallbackInfo& info)
@@ -1076,6 +1094,9 @@ static Napi::Object InitModule(Napi::Env env, Napi::Object exports)
     exports.Set("startBacking", Napi::Function::New(env, StartBacking));
     exports.Set("stopBacking", Napi::Function::New(env, StopBacking));
     exports.Set("seekBacking", Napi::Function::New(env, SeekBacking));
+    exports.Set("getBackingPosition", Napi::Function::New(env, GetBackingPosition));
+    exports.Set("getBackingDuration", Napi::Function::New(env, GetBackingDuration));
+    exports.Set("isBackingPlaying", Napi::Function::New(env, IsBackingPlaying));
 
     // Presets
     exports.Set("savePreset", Napi::Function::New(env, SavePreset));

@@ -79,6 +79,9 @@ contextBridge.exposeInMainWorld('slopsmithDesktop', {
         startBacking: () => ipcRenderer.invoke('audio:startBacking'),
         stopBacking: () => ipcRenderer.invoke('audio:stopBacking'),
         seekBacking: (seconds: number) => ipcRenderer.invoke('audio:seekBacking', seconds),
+        getBackingPosition: (): Promise<number> => ipcRenderer.invoke('audio:getBackingPosition'),
+        getBackingDuration: (): Promise<number> => ipcRenderer.invoke('audio:getBackingDuration'),
+        isBackingPlaying: (): Promise<boolean> => ipcRenderer.invoke('audio:isBackingPlaying'),
 
         // Presets
         savePreset: () => ipcRenderer.invoke('audio:savePreset'),
