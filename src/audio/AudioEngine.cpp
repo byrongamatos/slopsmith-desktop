@@ -355,8 +355,17 @@ void AudioEngine::stopBacking()
     }
 }
 
+bool AudioEngine::isBackingPlaying() const
+{
+    const juce::ScopedLock sl(backingLock);
+    if (backingTransport)
+        return backingTransport->isPlaying();
+    return false;
+}
+
 double AudioEngine::getBackingPosition() const
 {
+    const juce::ScopedLock sl(backingLock);
     if (backingTransport)
         return backingTransport->getCurrentPosition();
     return 0.0;
@@ -364,6 +373,7 @@ double AudioEngine::getBackingPosition() const
 
 double AudioEngine::getBackingDuration() const
 {
+    const juce::ScopedLock sl(backingLock);
     if (backingTransport)
         return backingTransport->getLengthInSeconds();
     return 0.0;
@@ -460,6 +470,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             backingBuffer.clear();
             juce::AudioSourceChannelInfo info(&backingBuffer, 0, numSamples);
             backingTransport->getNextAudioBlock(info);
+
+            // Sync the flag if transport stopped at EOF
+            if (!backingTransport->isPlaying())
+                backingPlaying.store(false);
 
             float bVol = backingVolume.load();
             for (int ch = 0; ch < numOutputChannels; ++ch)

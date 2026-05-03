@@ -62,7 +62,7 @@ public:
     void setBackingPosition(double seconds);
     void startBacking();
     void stopBacking();
-    bool isBackingPlaying() const { return backingPlaying.load(); }
+    bool isBackingPlaying() const;
     double getBackingPosition() const;
     double getBackingDuration() const;
 
