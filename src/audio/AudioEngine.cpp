@@ -320,7 +320,14 @@ bool AudioEngine::loadBackingTrack(const juce::File& file)
     backingSource.reset();
 
     auto* reader = formatManager.createReaderFor(file);
-    if (!reader) return false;
+    if (!reader)
+    {
+        // Transport/source already reset above; clear cached state so the renderer
+        // doesn't keep displaying the previous track's position/duration.
+        cachedBackingPosition.store(0.0);
+        cachedBackingDuration.store(0.0);
+        return false;
+    }
 
     backingSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
     backingTransport = std::make_unique<juce::AudioTransportSource>();
@@ -337,7 +344,8 @@ void AudioEngine::setBackingPosition(double seconds)
     if (backingTransport)
     {
         backingTransport->setPosition(seconds);
-        cachedBackingPosition.store(seconds);
+        // Read back the actual position; the transport may clamp (e.g. negative or past EOF).
+        cachedBackingPosition.store(backingTransport->getCurrentPosition());
     }
 }
 

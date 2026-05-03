@@ -62,7 +62,7 @@ public:
     void setBackingPosition(double seconds);
     void startBacking();
     void stopBacking();
-    // Lock-free reads — safe to call from any thread without blocking the audio callback
+    // Non-blocking reads — do not acquire backingLock and never block the audio callback
     bool isBackingPlaying() const { return backingPlaying.load(); }
     double getBackingPosition() const { return cachedBackingPosition.load(); }
     double getBackingDuration() const { return cachedBackingDuration.load(); }
