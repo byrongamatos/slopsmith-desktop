@@ -63,6 +63,7 @@ function createSplashWindow(): void {
     splashWindow = new BrowserWindow({
         width: 560,
         height: 360,
+        alwaysOnTop: true,
         resizable: false,
         minimizable: false,
         maximizable: false,
