@@ -219,28 +219,27 @@ export async function startPython(): Promise<void> {
     }
     const pythonPathEnv = pythonPathParts.join(path.delimiter);
 
-    // Pin ML model caches to the user's $HOME/.cache so demucs / torch /
-    // huggingface weights survive across launches and are shareable with
-    // any other torch app on the machine. The libraries already default
-    // to these paths via $HOME, but spelling them out here keeps the
-    // cache anchored to the real home dir even if a future Electron
-    // sandbox / AppImage relocates HOME. sloppak_convert.py uses
-    // env.setdefault on TORCH_HOME / XDG_CACHE_HOME, so values set here
-    // win over its CONFIG_DIR fallback (which is the right behaviour for
-    // Desktop; Docker still falls back to /config/torch_cache).
+    // Pin ML model caches to a persistent root (XDG_CACHE_HOME if set,
+    // otherwise the user's home/.cache) so demucs / torch / huggingface
+    // weights survive across launches and stay shareable with any other
+    // torch app on the machine. The libraries already pick those paths
+    // by default, but spelling them out here keeps the cache anchored
+    // even if a future Electron sandbox / AppImage relocates HOME.
+    // sloppak_convert.py uses env.setdefault on TORCH_HOME and
+    // XDG_CACHE_HOME, so values set here win over its CONFIG_DIR
+    // fallback — the right behaviour for Desktop; Docker still falls
+    // back to /config/torch_cache via the same setdefault.
     //
-    // Resolve home via app.getPath('home') rather than process.env.HOME:
-    // HOME is unset on Windows (and in some sandboxed contexts), which
-    // would make path.join produce a relative `.cache` and pass HOME=''
-    // into the subprocess. app.getPath consults the platform-correct
-    // source (HOME on POSIX, USERPROFILE on Windows). Spotted by Copilot
-    // review on PR #45.
+    // Home is resolved via app.getPath('home') rather than
+    // process.env.HOME: HOME is unset on Windows (and some sandboxed
+    // contexts), which would otherwise produce a relative `.cache` path
+    // and pass HOME='' into the subprocess. app.getPath consults the
+    // platform-correct source (HOME on POSIX, USERPROFILE on Windows).
     //
     // cacheBase derives from XDG_CACHE_HOME first so a user who pins
     // their cache to a non-default disk (e.g. XDG_CACHE_HOME=/mnt/big)
     // gets all three caches (XDG/TORCH/HF) under the same root rather
-    // than splitting torch/HF off to ~/.cache. Spotted by Copilot review
-    // on PR #45 round 2.
+    // than splitting torch/HF off to ~/.cache.
     const homeDir = app.getPath('home');
     const cacheBase = process.env.XDG_CACHE_HOME || path.join(homeDir, '.cache');
 
