@@ -228,7 +228,14 @@ export async function startPython(): Promise<void> {
     // env.setdefault on TORCH_HOME / XDG_CACHE_HOME, so values set here
     // win over its CONFIG_DIR fallback (which is the right behaviour for
     // Desktop; Docker still falls back to /config/torch_cache).
-    const homeDir = process.env.HOME || '';
+    //
+    // Resolve home via app.getPath('home') rather than process.env.HOME:
+    // HOME is unset on Windows (and in some sandboxed contexts), which
+    // would make path.join produce a relative `.cache` and pass HOME=''
+    // into the subprocess. app.getPath consults the platform-correct
+    // source (HOME on POSIX, USERPROFILE on Windows). Spotted by Copilot
+    // review on PR #45.
+    const homeDir = app.getPath('home');
     const cacheBase = path.join(homeDir, '.cache');
 
     // Build environment for Python process
