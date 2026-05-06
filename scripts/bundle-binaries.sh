@@ -34,6 +34,20 @@ else
     exit 1
 fi
 
+# ffprobe - demucs's audio loader spawns ffprobe before ffmpeg to read
+# stream metadata; falling through to a host-installed ffprobe (or none
+# at all) means the desktop bundle behaves differently on each user's
+# machine. Ship the build host's ffprobe alongside ffmpeg so the bundle
+# is self-contained on every platform. apt's ffmpeg package includes
+# ffprobe, so this is universally available where ffmpeg already is.
+if command -v ffprobe >/dev/null 2>&1; then
+    cp "$(which ffprobe)" "$BIN_DIR/"
+    echo " ffprobe: $(ls -lh "$BIN_DIR/ffprobe" | awk '{print $5}')"
+else
+    echo "ERROR: ffprobe not found on PATH; resources/bin/ffprobe is required so demucs can read stream metadata in stem-splitting (apt: ffmpeg / brew: ffmpeg)." >&2
+    exit 1
+fi
+
 # vgmstream-cli - used for Rocksmith WEM → WAV decoding.
 # Download from GitHub releases if not in PATH (CI does this inline).
 # verify_bundled_binaries downstream treats this as required and will

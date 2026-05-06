@@ -172,6 +172,18 @@ bundle_binaries_impl() {
     fi
     cp "$ffmpeg_bin" "$PROJECT_DIR/resources/bin/"
 
+    # ffprobe - demucs spawns ffprobe before ffmpeg to read stream
+    # metadata. brew's ffmpeg formula installs both binaries; bundle
+    # ffprobe so the desktop app doesn't fall through to a host-installed
+    # binary that may or may not exist.
+    local ffprobe_bin
+    ffprobe_bin="$(command -v ffprobe || true)"
+    if [[ -z "$ffprobe_bin" ]]; then
+        echo "Error: ffprobe not found on PATH. Install ffmpeg with \`brew install ffmpeg\` (it ships ffprobe alongside; ensure /opt/homebrew/bin is on PATH)." >&2
+        exit 1
+    fi
+    cp "$ffprobe_bin" "$PROJECT_DIR/resources/bin/"
+
     local fluidsynth_bin
     fluidsynth_bin="$(command -v fluidsynth || true)"
     if [[ -z "$fluidsynth_bin" ]]; then
@@ -233,7 +245,7 @@ bundle_binaries_impl() {
     # paths it has already rewritten, so the per-binary loop is safe
     # even when binaries share dylibs.
     if command -v dylibbundler &>/dev/null; then
-        for bin in fluidsynth ffmpeg vgmstream-cli; do
+        for bin in fluidsynth ffmpeg ffprobe vgmstream-cli; do
             local target="$PROJECT_DIR/resources/bin/$bin"
             [[ -f "$target" ]] || continue
             echo -e "${BLUE}Bundling ${bin} dependencies...${NC}"
