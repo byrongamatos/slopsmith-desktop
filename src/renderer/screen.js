@@ -162,42 +162,57 @@
         noiseGateThresholdWrap.style.display = noiseGateEnable.checked ? '' : 'none';
     }
 
-    function aePersistNoiseGateSettings() {
-        try {
-            const thresholdDb = noiseGateThresholdSlider ? parseFloat(noiseGateThresholdSlider.value) : -60;
-            const releaseMs = noiseGateReleaseSlider ? parseFloat(noiseGateReleaseSlider.value) : AE_NOISE_GATE_RELEASE_DEFAULT;
-            const depthDb = noiseGateDepthSlider ? parseFloat(noiseGateDepthSlider.value) : AE_NOISE_GATE_DEPTH_DEFAULT;
-            localStorage.setItem('slopsmith-audio-noise-gate', JSON.stringify({
-                thresholdDb: aeClampNoiseGateThresholdDb(thresholdDb),
-                releaseMs: aeClampNoiseGateReleaseMs(releaseMs),
-                depthDb: aeClampNoiseGateDepthDb(depthDb),
-            }));
-        } catch { /* ignore */ }
+    /** Preset serialization — stored next to inputGain/outputGain on each chain preset. */
+    function captureCurrentNoiseGateState() {
+        return {
+            enabled: !!noiseGateEnable?.checked,
+            thresholdDb: aeClampNoiseGateThresholdDb(
+                parseFloat(noiseGateThresholdSlider?.value ?? '-60')
+            ),
+            releaseMs: aeClampNoiseGateReleaseMs(
+                parseFloat(noiseGateReleaseSlider?.value ?? String(AE_NOISE_GATE_RELEASE_DEFAULT))
+            ),
+            depthDb: aeClampNoiseGateDepthDb(
+                parseFloat(noiseGateDepthSlider?.value ?? String(AE_NOISE_GATE_DEPTH_DEFAULT))
+            ),
+        };
+    }
+
+    /** Restore gate UI + engine from preset; older presets without `noiseGate` use defaults. */
+    function applyPresetNoiseGate(preset) {
+        const ng = preset && typeof preset.noiseGate === 'object' && preset.noiseGate !== null
+            ? preset.noiseGate
+            : null;
+        const defaults = { enabled: false, thresholdDb: -60, releaseMs: 100, depthDb: -60 };
+        const enabled = ng && typeof ng.enabled === 'boolean' ? ng.enabled : defaults.enabled;
+        let thresholdDb = defaults.thresholdDb;
+        let releaseMs = defaults.releaseMs;
+        let depthDb = defaults.depthDb;
+        if (ng) {
+            const t = Number(ng.thresholdDb);
+            if (Number.isFinite(t)) thresholdDb = aeClampNoiseGateThresholdDb(t);
+            const r = Number(ng.releaseMs);
+            if (Number.isFinite(r)) releaseMs = aeClampNoiseGateReleaseMs(r);
+            const d = Number(ng.depthDb);
+            if (Number.isFinite(d)) depthDb = aeClampNoiseGateDepthDb(d);
+        }
+        if (noiseGateEnable) noiseGateEnable.checked = enabled;
+        if (noiseGateThresholdSlider) noiseGateThresholdSlider.value = String(thresholdDb);
+        if (noiseGateReleaseSlider) noiseGateReleaseSlider.value = String(releaseMs);
+        if (noiseGateDepthSlider) noiseGateDepthSlider.value = String(depthDb);
+        aeSyncNoiseGateThresholdLabel();
+        aeSyncNoiseGateReleaseLabel();
+        aeSyncNoiseGateDepthLabel();
+        aeSyncNoiseGatePanelVisibility();
+        aeApplyNoiseGateToEngine();
     }
 
     function aeInitNoiseGateUi() {
         if (noiseGateEnable) noiseGateEnable.checked = false;
-        try {
-            const raw = localStorage.getItem('slopsmith-audio-noise-gate');
-            if (raw && noiseGateThresholdSlider) {
-                const o = JSON.parse(raw);
-                const t = Number(o?.thresholdDb);
-                if (Number.isFinite(t))
-                    noiseGateThresholdSlider.value = String(aeClampNoiseGateThresholdDb(t));
-                if (noiseGateReleaseSlider) {
-                    const r = Number(o?.releaseMs);
-                    noiseGateReleaseSlider.value = String(
-                        Number.isFinite(r) ? aeClampNoiseGateReleaseMs(r) : AE_NOISE_GATE_RELEASE_DEFAULT
-                    );
-                }
-                if (noiseGateDepthSlider) {
-                    const d = Number(o?.depthDb);
-                    noiseGateDepthSlider.value = String(
-                        Number.isFinite(d) ? aeClampNoiseGateDepthDb(d) : AE_NOISE_GATE_DEPTH_DEFAULT
-                    );
-                }
-            }
-        } catch { /* ignore */ }
+        // Slider defaults match screen.html; no global localStorage — restored per preset via applyPresetNoiseGate.
+        if (noiseGateThresholdSlider) noiseGateThresholdSlider.value = '-60';
+        if (noiseGateReleaseSlider) noiseGateReleaseSlider.value = String(AE_NOISE_GATE_RELEASE_DEFAULT);
+        if (noiseGateDepthSlider) noiseGateDepthSlider.value = String(AE_NOISE_GATE_DEPTH_DEFAULT);
         aeSyncNoiseGateThresholdLabel();
         aeSyncNoiseGateReleaseLabel();
         aeSyncNoiseGateDepthLabel();
@@ -641,21 +656,18 @@
         if (noiseGateThresholdSlider) {
             noiseGateThresholdSlider.addEventListener('input', () => {
                 aeSyncNoiseGateThresholdLabel();
-                aePersistNoiseGateSettings();
                 aeApplyNoiseGateToEngine();
             });
         }
         if (noiseGateReleaseSlider) {
             noiseGateReleaseSlider.addEventListener('input', () => {
                 aeSyncNoiseGateReleaseLabel();
-                aePersistNoiseGateSettings();
                 aeApplyNoiseGateToEngine();
             });
         }
         if (noiseGateDepthSlider) {
             noiseGateDepthSlider.addEventListener('input', () => {
                 aeSyncNoiseGateDepthLabel();
-                aePersistNoiseGateSettings();
                 aeApplyNoiseGateToEngine();
             });
         }
@@ -751,8 +763,9 @@
                     name: s.name || '',
                 }));
                 const gains = captureCurrentGainLevels();
+                const noiseGate = captureCurrentNoiseGateState();
                 const presets = getPresets();
-                presets[name] = { nativePreset, items, ...gains, created: Date.now() };
+                presets[name] = { nativePreset, items, ...gains, noiseGate, created: Date.now() };
                 localStorage.setItem('slopsmith-chain-presets', JSON.stringify(presets));
                 wrapper.remove();
                 renderPresetList();
@@ -992,6 +1005,7 @@
                 return false;
             }
             applyPresetGainLevels(preset);
+            applyPresetNoiseGate(preset);
             // Share the single getChainState() result between refreshChain and saveChainState
             // to avoid two back-to-back native bridge round-trips.
             const chain = await refreshChain();
@@ -1055,6 +1069,7 @@
 
     window._aeGetPresets = getPresets;
     window._aeApplyPresetGainLevels = applyPresetGainLevels;
+    window._aeApplyPresetNoiseGate = applyPresetNoiseGate;
     window._aeLoadDefaultPreset = loadDefaultPreset;
     window._aeReplaceChainWithPresetBlob = replaceChainWithPresetBlob;
 
@@ -1229,7 +1244,10 @@
 
             this.activeTone = effectiveBase;
             const initialPreset = this.tonePresetMap[effectiveBase];
-            if (initialPreset) applyPresetGainLevels(initialPreset);
+            if (initialPreset) {
+                applyPresetGainLevels(initialPreset);
+                applyPresetNoiseGate(initialPreset);
+            }
             await refreshChain();
             console.log('[tone-switcher] Preloaded tones:', Object.keys(this.toneSlotMap));
         }
@@ -1251,7 +1269,10 @@
             if (changes.length > 0) api.setMultiBypass(changes);
             this.activeTone = toneName;
             const newPreset = this.tonePresetMap[toneName];
-            if (newPreset) applyPresetGainLevels(newPreset);
+            if (newPreset) {
+                applyPresetGainLevels(newPreset);
+                applyPresetNoiseGate(newPreset);
+            }
             console.log('[tone-switcher] Switched to:', toneName);
         }
 
@@ -2559,6 +2580,15 @@
         if (_api?.setGain) { _api.setGain('input', inputLin); _api.setGain('output', outputLin); }
     }
 
+    function applyPresetNoiseGate(_api, preset) {
+        if (window._aeApplyPresetNoiseGate) {
+            window._aeApplyPresetNoiseGate(preset);
+            return;
+        }
+        void _api;
+        void preset;
+    }
+
     window._aeStartToneAutoSwitch = function() { startToneAutoSwitch(); };
     window._aeStopToneMonitor = function() {
         if (_toneMonitor) { clearInterval(_toneMonitor); _toneMonitor = null; }
@@ -2759,7 +2789,10 @@
                     window._toneSwitcher.switchToTone(switchKey);
                     const tpm = window._toneSwitcher.tonePresetMap;
                     const p = tpm && switchKey ? tpm[switchKey] : null;
-                    if (p) applyPresetGainLevels(api, p);
+                    if (p) {
+                        applyPresetGainLevels(api, p);
+                        applyPresetNoiseGate(api, p);
+                    }
                     return;
                 }
                 // Mode changed — reset and re-preload
@@ -2904,7 +2937,10 @@
                 }
 
                 const initialPreset = tonePresetMap[effectiveBase];
-                if (initialPreset) applyPresetGainLevels(api, initialPreset);
+                if (initialPreset) {
+                    applyPresetGainLevels(api, initialPreset);
+                    applyPresetNoiseGate(api, initialPreset);
+                }
 
                 window._toneSwitcher = {
                     activeTone: effectiveBase,
@@ -2921,7 +2957,10 @@
                         if (bypassList.length > 0) api.setMultiBypass(bypassList);
                         this.activeTone = name;
                         const newPreset = this.tonePresetMap?.[name];
-                        if (newPreset) applyPresetGainLevels(api, newPreset);
+                        if (newPreset) {
+                            applyPresetGainLevels(api, newPreset);
+                            applyPresetNoiseGate(api, newPreset);
+                        }
                         console.log('[tone-switcher] Switched to:', name);
                     }
                 };
