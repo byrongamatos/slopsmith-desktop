@@ -36,8 +36,7 @@ public:
     juce::Array<int> getBufferSizes();
     DeviceOptions probeDeviceOptions(const juce::String& typeName,
                                      const juce::String& inputName,
-                                     const juce::String& outputName,
-                                     double sampleRate = 0.0);
+                                     const juce::String& outputName);
     juce::String getCurrentDeviceType();
     juce::String getCurrentInputDevice();
     juce::String getCurrentOutputDevice();

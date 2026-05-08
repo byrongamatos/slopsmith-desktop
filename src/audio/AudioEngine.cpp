@@ -79,8 +79,7 @@ juce::Array<int> AudioEngine::getBufferSizes()
 
 AudioEngine::DeviceOptions AudioEngine::probeDeviceOptions(const juce::String& typeName,
                                                            const juce::String& inputName,
-                                                           const juce::String& outputName,
-                                                           double sampleRate)
+                                                           const juce::String& outputName)
 {
     DeviceOptions options;
 
@@ -128,22 +127,17 @@ AudioEngine::DeviceOptions AudioEngine::probeDeviceOptions(const juce::String& t
         for (auto rate : device->getAvailableSampleRates())
             options.sampleRates.addIfNotAlreadyThere(rate);
 
+        // Buffer sizes are advertised before opening the device, so they are
+        // intentionally rate-agnostic. Opening a probe device while audio is
+        // running can disrupt some drivers; the real device setup reports the
+        // actual accepted block size after Apply.
         const auto advertisedBuffers = device->getAvailableBufferSizes();
-        const double rateToReport = sampleRate > 0.0
-            ? sampleRate
-            : (options.sampleRates.contains(48000.0) ? 48000.0
-               : (options.sampleRates.size() > 0 ? options.sampleRates[0] : 0.0));
-
-        // Keep probing cheap. Some Windows drivers, especially WASAPI exclusive,
-        // take a long time to open/close for each candidate buffer size. The
-        // real device setup still reports the actual accepted block size after
-        // Apply, so use advertised sizes here and reconcile after selection.
         for (auto size : advertisedBuffers)
             options.bufferSizes.addIfNotAlreadyThere(size);
 
-        fprintf(stderr, "[AudioEngine] Probed device options: type='%s' in='%s' out='%s' sr=%.0f rates=%d buffers=%d\n",
+        fprintf(stderr, "[AudioEngine] Probed device options: type='%s' in='%s' out='%s' rates=%d buffers=%d\n",
                 options.type.toRawUTF8(), options.input.toRawUTF8(), options.output.toRawUTF8(),
-                rateToReport, options.sampleRates.size(), options.bufferSizes.size());
+            options.sampleRates.size(), options.bufferSizes.size());
     }
     catch (const std::exception& e)
     {

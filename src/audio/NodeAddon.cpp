@@ -197,12 +197,11 @@ static Napi::Value ProbeDeviceOptions(const Napi::CallbackInfo& info)
         return obj;
     }
 
-    auto type = info.Length() > 0 && !info[0].IsNull() ? info[0].As<Napi::String>().Utf8Value() : "";
-    auto input = info.Length() > 1 && !info[1].IsNull() ? info[1].As<Napi::String>().Utf8Value() : "";
-    auto output = info.Length() > 2 && !info[2].IsNull() ? info[2].As<Napi::String>().Utf8Value() : "";
-    double sampleRate = info.Length() > 3 && !info[3].IsUndefined() ? info[3].As<Napi::Number>().DoubleValue() : 0.0;
+    auto type = info.Length() > 0 && info[0].IsString() ? info[0].As<Napi::String>().Utf8Value() : "";
+    auto input = info.Length() > 1 && info[1].IsString() ? info[1].As<Napi::String>().Utf8Value() : "";
+    auto output = info.Length() > 2 && info[2].IsString() ? info[2].As<Napi::String>().Utf8Value() : "";
 
-    auto options = engine->probeDeviceOptions(juce::String(type), juce::String(input), juce::String(output), sampleRate);
+    auto options = engine->probeDeviceOptions(juce::String(type), juce::String(input), juce::String(output));
     obj.Set("type", options.type.toStdString());
     obj.Set("input", options.input.toStdString());
     obj.Set("output", options.output.toStdString());
