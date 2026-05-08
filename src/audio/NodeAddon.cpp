@@ -186,9 +186,15 @@ static Napi::Value ProbeDeviceOptions(const Napi::CallbackInfo& info)
 {
     auto env = info.Env();
     auto obj = Napi::Object::New(env);
+    auto type = info.Length() > 0 && info[0].IsString() ? info[0].As<Napi::String>().Utf8Value() : "";
+    auto input = info.Length() > 1 && info[1].IsString() ? info[1].As<Napi::String>().Utf8Value() : "";
+    auto output = info.Length() > 2 && info[2].IsString() ? info[2].As<Napi::String>().Utf8Value() : "";
     auto ratesArray = Napi::Array::New(env);
     auto buffersArray = Napi::Array::New(env);
 
+    obj.Set("type", type);
+    obj.Set("input", input);
+    obj.Set("output", output);
     obj.Set("sampleRates", ratesArray);
     obj.Set("bufferSizes", buffersArray);
     if (!engine)
@@ -196,10 +202,6 @@ static Napi::Value ProbeDeviceOptions(const Napi::CallbackInfo& info)
         obj.Set("error", "Audio engine not initialized");
         return obj;
     }
-
-    auto type = info.Length() > 0 && info[0].IsString() ? info[0].As<Napi::String>().Utf8Value() : "";
-    auto input = info.Length() > 1 && info[1].IsString() ? info[1].As<Napi::String>().Utf8Value() : "";
-    auto output = info.Length() > 2 && info[2].IsString() ? info[2].As<Napi::String>().Utf8Value() : "";
 
     auto options = engine->probeDeviceOptions(juce::String(type), juce::String(input), juce::String(output));
     obj.Set("type", options.type.toStdString());

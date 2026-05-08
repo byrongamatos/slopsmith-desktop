@@ -383,7 +383,11 @@ bool AudioEngine::setAudioDevice(const juce::String& inputName, const juce::Stri
     }
     else
     {
-        fprintf(stderr, "[AudioEngine] Device configured OK. Current device: none\n");
+        fprintf(stderr, "[AudioEngine] Device setup completed but no current device is active\n");
+        currentSampleRate = 0.0;
+        currentBlockSize = 0;
+        signalChain.releaseResources();
+        return false;
     }
 
     if (wasRunning) startAudio();
