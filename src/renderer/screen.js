@@ -15,13 +15,13 @@ window.__slopsmithDesktopAudioHooks = window.__slopsmithDesktopAudioHooks || {};
         return;
     }
 
-    // Hook registry survives renderer re-evaluation; interval IDs live here so a
-    // re-run of this IIFE can still cancel timers started by the previous run.
+    // Hook registry survives renderer re-evaluation; interval IDs live here so
+    // the next stopToneMonitor call (from a re-bound playSong wrapper) can
+    // cancel a timer started by the previous evaluation. Don't preemptively
+    // clear here — letting the prior interval keep running preserves mid-song
+    // tone polling, since its closure refs (toneSwitcher, autoSwitchEnabled)
+    // are still valid until the next playSong rotates to the new closure.
     const hookState = window.__slopsmithDesktopAudioHooks;
-    if (hookState.toneMonitorInterval) {
-        clearInterval(hookState.toneMonitorInterval);
-        hookState.toneMonitorInterval = null;
-    }
 
     // ── State ─────────────────────────────────────────────────────────────────
     let audioRunning = false;
@@ -2559,14 +2559,9 @@ window.__slopsmithDesktopAudioHooks = window.__slopsmithDesktopAudioHooks || {};
 
 // ── Chain button + tone auto-switch (runs outside IIFE so it works without audio API) ──
 (function() {
+    // Hook registry shared across re-evaluations; see the IIFE 1 comment for
+    // why we don't preemptively clear toneAutoMonitor here.
     const hookState = window.__slopsmithDesktopAudioHooks;
-    // Cancel any auto-switch interval left over from a previous evaluation of
-    // this IIFE — the prior closure is gone and can't clear it itself.
-    if (hookState.toneAutoMonitor) {
-        clearInterval(hookState.toneAutoMonitor);
-        hookState.toneAutoMonitor = null;
-        window._toneAutoSwitchActive = false;
-    }
     const origPS = hookState.toneAutoBasePlaySong || window.playSong;
     if (!origPS) return;
 
@@ -2621,6 +2616,9 @@ window.__slopsmithDesktopAudioHooks = window.__slopsmithDesktopAudioHooks || {};
 
     window._aeStartToneAutoSwitch = function() { startToneAutoSwitch(); };
     window._aeStopToneMonitor = function() {
+        // Public teardown used by _applyToneMappingsImpl; clear both monitors so
+        // the IIFE 1 toneSwitcher can't keep applying stale mappings either.
+        if (hookState.toneMonitorInterval) { clearInterval(hookState.toneMonitorInterval); hookState.toneMonitorInterval = null; }
         if (hookState.toneAutoMonitor) { clearInterval(hookState.toneAutoMonitor); hookState.toneAutoMonitor = null; }
         window._toneAutoSwitchActive = false;
     };
