@@ -421,9 +421,20 @@ bool AudioEngine::loadBackingTrack(const juce::File& file)
     backingTransport.reset();
     backingSource.reset();
 
+    const bool exists = file.existsAsFile();
+    std::cerr << "[AudioEngine] loadBackingTrack path="
+              << file.getFullPathName().toStdString()
+              << " exists=" << exists
+              << " size=" << (exists ? (long long)file.getSize() : -1)
+              << std::endl;
+
     auto* reader = formatManager.createReaderFor(file);
     if (!reader)
     {
+        std::cerr << "[AudioEngine] loadBackingTrack: no reader for ext='"
+                  << file.getFileExtension().toStdString()
+                  << "' (registered formats=" << formatManager.getNumKnownFormats()
+                  << ")" << std::endl;
         // Transport/source already reset above; clear cached state so the renderer
         // doesn't keep displaying the previous track's position/duration.
         cachedBackingPosition.store(0.0);

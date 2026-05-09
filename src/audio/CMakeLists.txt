@@ -64,6 +64,8 @@ target_compile_definitions(slopsmith_audio PRIVATE
     JUCE_REPORT_APP_USAGE=0
     JUCE_LOG_ASSERTIONS=0
     JUCE_DISABLE_ASSERTIONS=1
+    JUCE_USE_OGGVORBIS=1
+    JUCE_USE_FLAC=1
 )
 
 # Platform-specific
