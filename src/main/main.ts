@@ -23,7 +23,15 @@ import { initSoundfontManager } from './soundfont-manager';
 // slopsmith-plugin-notedetect#27, but third-party plugins may still hit the
 // Web-Audio path on their own).
 if (process.platform === 'linux') {
-    app.commandLine.appendSwitch('enable-features', 'WebRTCPipeWireCapturer');
+    // Merge with any existing `--enable-features=` value (set by Electron
+    // defaults, parent env, or future code) instead of overwriting — a bare
+    // appendSwitch would replace the comma-separated list and silently
+    // disable everything else that was enabled.
+    const existing = app.commandLine.getSwitchValue('enable-features');
+    const merged = existing
+        ? `${existing},WebRTCPipeWireCapturer`
+        : 'WebRTCPipeWireCapturer';
+    app.commandLine.appendSwitch('enable-features', merged);
 }
 
 // Prevent error dialogs from showing when the Python subprocess has issues.
@@ -225,24 +233,24 @@ function isLocalRendererOrigin(url: string): boolean {
 
 function installLocalhostMediaPermissions(): void {
     const def = session.defaultSession;
-    // Electron's default (with no handler installed) is to grant every
-    // permission request. We only want to be MORE restrictive for one
-    // specific case — `media` requests from a non-local origin — so other
-    // permissions (clipboard, notifications, fullscreen, ...) fall through
-    // to the prior default-allow behaviour. Denying them here would silently
-    // break unrelated renderer/plugin features that worked before.
-    def.setPermissionRequestHandler((_wc, permission, callback, details) => {
-        if (permission === 'media') {
-            callback(isLocalRendererOrigin(details.requestingUrl || ''));
-            return;
-        }
-        callback(true);
+    // Gate ALL permissions by origin, not just `media`:
+    //
+    // - For the localhost-served renderer (where the Slopsmith app actually
+    //   runs), grant every permission. This matches Electron's prior
+    //   default-allow behaviour for the only origin we actually load, so
+    //   unrelated renderer/plugin features (clipboard, notifications,
+    //   fullscreen, ...) keep working unchanged.
+    // - For any other origin, deny. The main window has webSecurity: false
+    //   and no will-navigate enforcement, so a stray navigation/redirect
+    //   would otherwise inherit the prior default-allow — granting an
+    //   external page clipboard / geolocation / notifications it shouldn't
+    //   have. Restricting non-local origins to deny is strictly safer than
+    //   the pre-handler default for this case.
+    def.setPermissionRequestHandler((_wc, _permission, callback, details) => {
+        callback(isLocalRendererOrigin(details.requestingUrl || ''));
     });
-    def.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
-        if (permission === 'media') {
-            return isLocalRendererOrigin(requestingOrigin || '');
-        }
-        return true;
+    def.setPermissionCheckHandler((_wc, _permission, requestingOrigin) => {
+        return isLocalRendererOrigin(requestingOrigin || '');
     });
 }
 
