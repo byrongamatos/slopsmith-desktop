@@ -213,39 +213,38 @@ function createWindow(port: number): void {
     }
 }
 
-// Auto-grant the renderer's microphone/camera ("media") requests when they
-// come from the localhost-served Slopsmith app. Without this, Chromium in
-// Electron silently denies getUserMedia for the http://127.0.0.1 origin we
-// load, which surfaces as the "Could not access audio input" popup the
-// note_detect plugin used to show on Linux (#52). The bundled note_detect
-// now routes pitch detection through the JUCE bridge so it doesn't need
-// this, but other plugins / future renderer code may still call
-// getUserMedia and we don't want them to hit the same wall.
-//
-// Scoped tightly to http(s)://127.0.0.1[:port]/ and http(s)://localhost[:port]/
-// so a navigation to any other origin (a paste, a redirect, a misconfigured
-// plugin) does NOT silently grant mic access — those fall through to
-// Chromium's default deny.
+// Predicate: did a permission request originate from the localhost-served
+// Slopsmith renderer? Tight match on http(s)://(127.0.0.1|localhost)[:port][/...]
+// so a stray navigation to e.g. http://localhost.evil.com cannot impersonate
+// the local origin. Used by `installLocalhostPermissions` below to gate
+// every permission request — see that function for the policy.
 function isLocalRendererOrigin(url: string): boolean {
     if (!url) return false;
     return /^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/.*)?$/.test(url);
 }
 
-function installLocalhostMediaPermissions(): void {
+// Origin-scoped permission policy for the default session.
+//
+// Why this exists: clicking Detect in the bundled note_detect plugin on
+// Linux used to show "Could not access audio input" (#52) because Chromium
+// in Electron silently denies `media` for the localhost-served renderer
+// when no permission handler is installed. The plugin itself now routes
+// pitch detection through the JUCE bridge instead of getUserMedia, but
+// we still want a defensive handler so future renderer code / third-party
+// plugins don't hit the same wall.
+//
+// Policy: gate EVERY permission (not just `media`) on origin.
+// - Localhost origins (where the Slopsmith app actually runs): grant.
+//   This matches Electron's prior default-allow for that origin, so
+//   unrelated renderer/plugin features (clipboard, notifications,
+//   fullscreen, …) keep working unchanged.
+// - Any other origin: deny. The main window runs with webSecurity: false
+//   and there's no will-navigate enforcement, so without this, a stray
+//   redirect or pasted URL would silently inherit clipboard / geolocation /
+//   notifications etc. Denying non-local origins is strictly safer than
+//   the pre-handler default for that case.
+function installLocalhostPermissions(): void {
     const def = session.defaultSession;
-    // Gate ALL permissions by origin, not just `media`:
-    //
-    // - For the localhost-served renderer (where the Slopsmith app actually
-    //   runs), grant every permission. This matches Electron's prior
-    //   default-allow behaviour for the only origin we actually load, so
-    //   unrelated renderer/plugin features (clipboard, notifications,
-    //   fullscreen, ...) keep working unchanged.
-    // - For any other origin, deny. The main window has webSecurity: false
-    //   and no will-navigate enforcement, so a stray navigation/redirect
-    //   would otherwise inherit the prior default-allow — granting an
-    //   external page clipboard / geolocation / notifications it shouldn't
-    //   have. Restricting non-local origins to deny is strictly safer than
-    //   the pre-handler default for this case.
     def.setPermissionRequestHandler((_wc, _permission, callback, details) => {
         callback(isLocalRendererOrigin(details.requestingUrl || ''));
     });
@@ -260,7 +259,7 @@ async function startup(): Promise<void> {
     // Install permission handlers first so any preload script / plugin that
     // probes getUserMedia during early renderer startup sees the localhost
     // grant rather than the default-deny.
-    installLocalhostMediaPermissions();
+    installLocalhostPermissions();
 
     // Register startup status IPC handlers before creating the splash window
     // so the splash preload's immediate startup:requestStatus is handled.
