@@ -2,6 +2,8 @@
 // Communicates with the JUCE audio engine via window.slopsmithDesktop.audio
 // Desktop audio engine plugin
 
+window.__slopsmithDesktopAudioHooks = window.__slopsmithDesktopAudioHooks || {};
+
 (function() {
     'use strict';
 
@@ -12,6 +14,14 @@
         if (panel) panel.innerHTML = '<div class="p-8 text-center text-slate-400">Audio engine is only available in the Slopsmith Desktop app.</div>';
         return;
     }
+
+    // Hook registry survives renderer re-evaluation; interval IDs live here so
+    // the next stopToneMonitor call (from a re-bound playSong wrapper) can
+    // cancel a timer started by the previous evaluation. Don't preemptively
+    // clear here — letting the prior interval keep running preserves mid-song
+    // tone polling, since its closure refs (toneSwitcher, autoSwitchEnabled)
+    // are still valid until the next playSong rotates to the new closure.
+    const hookState = window.__slopsmithDesktopAudioHooks;
 
     // ── State ─────────────────────────────────────────────────────────────────
     let audioRunning = false;
@@ -1167,7 +1177,6 @@
 
     // ── Tone Switching ───────────────────────────────────────────────────────────
     let toneSwitcher = null;
-    let toneMonitorInterval = null;
     let autoSwitchEnabled = localStorage.getItem('slopsmith-tone-auto-switch') === 'true';
     const originalToneNamesCache = new Map();
 
@@ -1492,8 +1501,8 @@
         // If IIFE2's startToneAutoSwitch is already running its own 50ms polling loop,
         // don't start a parallel interval — both would call switchToTone at 50ms cadence.
         if (window._toneAutoSwitchActive) return;
-        if (toneMonitorInterval) clearInterval(toneMonitorInterval);
-        toneMonitorInterval = setInterval(() => {
+        if (hookState.toneMonitorInterval) clearInterval(hookState.toneMonitorInterval);
+        hookState.toneMonitorInterval = setInterval(() => {
             if (!toneSwitcher || !autoSwitchEnabled) return;
             const hw = window.highway || window._slopsmithHighway;
             if (!hw || !hw.getTime) return;
@@ -1625,7 +1634,7 @@
     }
 
     function stopToneMonitor() {
-        if (toneMonitorInterval) { clearInterval(toneMonitorInterval); toneMonitorInterval = null; }
+        if (hookState.toneMonitorInterval) { clearInterval(hookState.toneMonitorInterval); hookState.toneMonitorInterval = null; }
     }
 
     // ── Floating Tone Panel in Player ──────────────────────────────────────────
@@ -2163,19 +2172,24 @@
         }
     }
 
-    // Hook playSong for tone switching setup
-    const _origPlaySong = window.playSong;
-    if (_origPlaySong) {
+    // Hook playSong for tone switching setup. Keep the wrapper singleton-style so
+    // renderer rehydration updates this implementation without stacking wrappers.
+    hookState.toneSetupImpl = async function(filename, arrangement, nextPlaySong) {
+        if (window._aeMarkSongTransition) window._aeMarkSongTransition(7000);
+        stopToneMonitor();
+        closeTonePanel();
+        await nextPlaySong.call(this, filename, arrangement);
+        // Inject tones button into player controls
+        setTimeout(() => injectPlayerToneButton(), 500);
+        // Tone-chain preload is handled only by the outer playSong timer (single path — avoids
+        // stacking the menu chain with a second preload).
+    };
+    if (typeof window.playSong === 'function' && !hookState.toneSetupInstalled) {
+        hookState.toneSetupBasePlaySong = window.playSong;
         window.playSong = async function(filename, arrangement) {
-            if (window._aeMarkSongTransition) window._aeMarkSongTransition(7000);
-            stopToneMonitor();
-            closeTonePanel();
-            await _origPlaySong(filename, arrangement);
-            // Inject tones button into player controls
-            setTimeout(() => injectPlayerToneButton(), 500);
-            // Tone-chain preload is handled only by the outer playSong timer (single path — avoids
-            // stacking the menu chain with a second preload).
+            return hookState.toneSetupImpl.call(this, filename, arrangement, hookState.toneSetupBasePlaySong);
         };
+        hookState.toneSetupInstalled = true;
     }
 
     // ── Tone Automation ────────────────────────────────────────────────────────
@@ -2545,10 +2559,12 @@
 
 // ── Chain button + tone auto-switch (runs outside IIFE so it works without audio API) ──
 (function() {
-    const origPS = window.playSong;
+    // Hook registry shared across re-evaluations; see the IIFE 1 comment for
+    // why we don't preemptively clear toneAutoMonitor here.
+    const hookState = window.__slopsmithDesktopAudioHooks;
+    const origPS = hookState.toneAutoBasePlaySong || window.playSong;
     if (!origPS) return;
 
-    let _toneMonitor = null;
     let _lastTone = null;
     /** Song + arrangement — invalidates preload when switching Lead/Bass/etc. on the same file */
     let _preloadedToneCacheKey = null;
@@ -2600,24 +2616,27 @@
 
     window._aeStartToneAutoSwitch = function() { startToneAutoSwitch(); };
     window._aeStopToneMonitor = function() {
-        if (_toneMonitor) { clearInterval(_toneMonitor); _toneMonitor = null; }
+        // Public teardown used by _applyToneMappingsImpl; clear both monitors so
+        // the IIFE 1 toneSwitcher can't keep applying stale mappings either.
+        if (hookState.toneMonitorInterval) { clearInterval(hookState.toneMonitorInterval); hookState.toneMonitorInterval = null; }
+        if (hookState.toneAutoMonitor) { clearInterval(hookState.toneAutoMonitor); hookState.toneAutoMonitor = null; }
         window._toneAutoSwitchActive = false;
     };
 
     function startToneAutoSwitch() {
-        if (_toneMonitor) clearInterval(_toneMonitor);
+        if (hookState.toneAutoMonitor) clearInterval(hookState.toneAutoMonitor);
         _lastTone = null;
         window._toneAutoSwitchActive = true;
 
-        _toneMonitor = setInterval(() => {
+        hookState.toneAutoMonitor = setInterval(() => {
             const hw = window.highway || window._slopsmithHighway;
             if (!hw || !hw.getTime) return;
 
             const autoOn = localStorage.getItem('slopsmith-tone-auto-switch') === 'true';
             const taOn = window._aeToneAutomation?.isEnabled?.() === true;
             if (!autoOn && !taOn) {
-                clearInterval(_toneMonitor);
-                _toneMonitor = null;
+                clearInterval(hookState.toneAutoMonitor);
+                hookState.toneAutoMonitor = null;
                 window._toneAutoSwitchActive = false;
                 return;
             }
@@ -2649,9 +2668,9 @@
         }, 50);
     }
 
-    window.playSong = async function(filename, arrangement) {
+    hookState.toneAutoImpl = async function(filename, arrangement, nextPlaySong) {
         if (window._aeMarkSongTransition) window._aeMarkSongTransition(7000);
-        if (_toneMonitor) { clearInterval(_toneMonitor); _toneMonitor = null; }
+        if (hookState.toneAutoMonitor) { clearInterval(hookState.toneAutoMonitor); hookState.toneAutoMonitor = null; }
         window._toneAutoSwitchActive = false;
         window._aeDidClearChainForNewSong = false;
         window._aeClearingChainForNewSong = false;
@@ -2670,7 +2689,7 @@
             }
         }
 
-        await origPS(filename, arrangement);
+        await nextPlaySong.call(this, filename, arrangement);
 
         // Tear down the menu/default chain after load (never await clearChain here — it can re-enter
         // the audio host during playSong and crash). The timed preload below rebuilds song presets.
@@ -2719,7 +2738,7 @@
             if (autoOn || taOn) {
                 startToneAutoSwitch();
             } else {
-                if (_toneMonitor) { clearInterval(_toneMonitor); _toneMonitor = null; }
+                if (hookState.toneAutoMonitor) { clearInterval(hookState.toneAutoMonitor); hookState.toneAutoMonitor = null; }
                 window._toneAutoSwitchActive = false;
             }
 
@@ -2983,16 +3002,32 @@
         }, 800);
     };
 
-    const origStopSong = window.stopSong;
-    if (typeof origStopSong === 'function') {
-        window.stopSong = async function(...args) {
-            if (_toneMonitor) { clearInterval(_toneMonitor); _toneMonitor = null; }
-            window._toneAutoSwitchActive = false;
-            const result = await origStopSong.apply(this, args);
+    if (!hookState.toneAutoInstalled) {
+        hookState.toneAutoBasePlaySong = origPS;
+        window.playSong = async function(filename, arrangement) {
+            return hookState.toneAutoImpl.call(this, filename, arrangement, hookState.toneAutoBasePlaySong);
+        };
+        hookState.toneAutoInstalled = true;
+    }
+
+    hookState.stopSongImpl = async function(args, nextStopSong) {
+        // Tear down both monitors (IIFE 1's toneMonitorInterval + IIFE 2's
+        // toneAutoMonitor) — leaving either running after stopSong would keep
+        // polling/switching tones on a stopped song until the next playSong.
+        if (window._aeStopToneMonitor) window._aeStopToneMonitor();
+        try {
+            return await nextStopSong.apply(this, args);
+        } finally {
             if (window._closeChainPanel) window._closeChainPanel();
             if (window._aeLoadDefaultPreset) void window._aeLoadDefaultPreset('song-stop');
-            return result;
+        }
+    };
+    if (typeof window.stopSong === 'function' && !hookState.stopSongInstalled) {
+        hookState.stopSongBaseStopSong = window.stopSong;
+        window.stopSong = async function(...args) {
+            return hookState.stopSongImpl.call(this, args, hookState.stopSongBaseStopSong);
         };
+        hookState.stopSongInstalled = true;
     }
 
     // Inject Chain button immediately at startup so it's always visible in the
