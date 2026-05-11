@@ -185,7 +185,7 @@ double AudioEngine::getLatencyMs() const
         int latencySamples = device->getCurrentBufferSizeSamples()
                            + device->getInputLatencyInSamples()
                            + device->getOutputLatencyInSamples();
-        return (latencySamples / currentSampleRate) * 1000.0;
+        return (latencySamples / currentSampleRate.load(std::memory_order_relaxed)) * 1000.0;
     }
     return 0.0;
 }
@@ -370,21 +370,22 @@ bool AudioEngine::setAudioDevice(const juce::String& inputName, const juce::Stri
 
     if (auto* configuredDevice = deviceManager.getCurrentAudioDevice())
     {
-        currentSampleRate = configuredDevice->getCurrentSampleRate();
+        const double sr = configuredDevice->getCurrentSampleRate();
+        currentSampleRate.store(sr, std::memory_order_relaxed);
         currentBlockSize = configuredDevice->getCurrentBufferSizeSamples();
 
         fprintf(stderr, "[AudioEngine] Device configured OK. Current device: %s\n",
                 configuredDevice->getName().toRawUTF8());
         fprintf(stderr, "[AudioEngine] Actual device setup: sr=%.0f bs=%d (requested bs=%d)\n",
-                currentSampleRate, currentBlockSize, bufferSize);
+                sr, currentBlockSize, bufferSize);
 
-        signalChain.prepare(currentSampleRate, currentBlockSize);
-        noiseGate.prepare(currentSampleRate, currentBlockSize);
+        signalChain.prepare(sr, currentBlockSize);
+        noiseGate.prepare(sr, currentBlockSize);
     }
     else
     {
         fprintf(stderr, "[AudioEngine] Device setup completed but no current device is active\n");
-        currentSampleRate = 0.0;
+        currentSampleRate.store(0.0, std::memory_order_relaxed);
         currentBlockSize = 0;
         signalChain.releaseResources();
         return false;
@@ -447,7 +448,7 @@ bool AudioEngine::loadBackingTrack(const juce::File& file)
     backingSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
     backingTransport = std::make_unique<juce::AudioTransportSource>();
     backingTransport->setSource(backingSource.get(), 0, nullptr, readerSampleRate);
-    backingTransport->prepareToPlay(currentBlockSize, currentSampleRate);
+    backingTransport->prepareToPlay(currentBlockSize, currentSampleRate.load(std::memory_order_relaxed));
     cachedBackingDuration.store(backingTransport->getLengthInSeconds());
     cachedBackingPosition.store(0.0);
     std::cerr << "[AudioEngine] loadBackingTrack OK sr=" << readerSampleRate
@@ -507,7 +508,8 @@ void AudioEngine::setNoiseGate(bool enabled, float thresholdDb, float releaseMs,
 
 void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
 {
-    currentSampleRate = device->getCurrentSampleRate();
+    const double sr = device->getCurrentSampleRate();
+    currentSampleRate.store(sr, std::memory_order_relaxed);
     currentBlockSize = device->getCurrentBufferSizeSamples();
 
     // Reset the input ring buffer so a stop→start cycle delivers a
@@ -519,13 +521,13 @@ void AudioEngine::audioDeviceAboutToStart(juce::AudioIODevice* device)
     for (auto& slot : inputFrameRing)
         slot.store(0.0f, std::memory_order_relaxed);
 
-    signalChain.prepare(currentSampleRate, currentBlockSize);
-    pitchDetector.prepare(currentSampleRate, currentBlockSize);
-    noiseGate.prepare(currentSampleRate, currentBlockSize);
+    signalChain.prepare(sr, currentBlockSize);
+    pitchDetector.prepare(sr, currentBlockSize);
+    noiseGate.prepare(sr, currentBlockSize);
 
     const juce::ScopedLock sl(backingLock);
     if (backingTransport)
-        backingTransport->prepareToPlay(currentBlockSize, currentSampleRate);
+        backingTransport->prepareToPlay(currentBlockSize, sr);
 }
 
 void AudioEngine::audioDeviceStopped()

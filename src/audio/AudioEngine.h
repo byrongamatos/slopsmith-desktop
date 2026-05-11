@@ -44,7 +44,7 @@ public:
     juce::String getCurrentDeviceType();
     juce::String getCurrentInputDevice();
     juce::String getCurrentOutputDevice();
-    double getCurrentSampleRate() const { return currentSampleRate; }
+    double getCurrentSampleRate() const { return currentSampleRate.load(std::memory_order_relaxed); }
     int getCurrentBlockSize() const { return currentBlockSize; }
 
     // Device selection
@@ -152,7 +152,14 @@ private:
     juce::CriticalSection backingLock;
 
     bool audioRunning = false;
-    double currentSampleRate = 48000.0;
+    // Sample rate is written from the JUCE device callbacks (audio
+    // thread / device-management thread) and read from arbitrary
+    // callers including the JS thread via getCurrentSampleRate(),
+    // so a plain double would be a C++ data race. std::atomic<double>
+    // is well-defined and lock-free on the platforms we ship; the
+    // hot reads use relaxed since the consumer just wants the latest
+    // observable value, not a synchronization point.
+    std::atomic<double> currentSampleRate{48000.0};
     int currentBlockSize = 256;
 
     // Lock-free SPSC ring buffer for raw mono input. Single producer is

@@ -274,14 +274,28 @@ export function initAudioBridge(mainWindow: BrowserWindow | null): void {
         if (!audio) return;
         if (inputFrameSubscribers.has(wc)) return;
         inputFrameSubscribers.add(wc);
-        // Attach the destroyed-cleanup listener at most once per
-        // WebContents lifetime — without the WeakSet guard, repeated
-        // subscribe/unsubscribe cycles (plugin mount/unmount) would
-        // accumulate one-shot listeners that never fire until window
-        // close.
+        // Attach lifecycle cleanup listeners at most once per
+        // WebContents lifetime. `destroyed` covers window close /
+        // crash. `did-start-navigation` (main frame) covers page
+        // reload and SPA route changes that don't tear down the
+        // WebContents — without it, a renderer that subscribed,
+        // reloaded, and never re-subscribed would leave the timer
+        // running forever streaming to a dead listener. WeakSet
+        // guards against accumulating multiple listeners across
+        // subscribe/unsubscribe cycles within the same page load.
         if (!inputFrameDestroyHooked.has(wc)) {
             inputFrameDestroyHooked.add(wc);
             wc.once('destroyed', () => removeInputFrameSubscriber(wc));
+            wc.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+                // Drop subscribers on real main-frame navigations only.
+                // In-page hash/history navigations don't re-init the
+                // renderer's preload context, so the existing
+                // ref-counted listener is still live and we shouldn't
+                // tear down the subscription out from under it.
+                if (!isMainFrame || isInPlace) return;
+                removeInputFrameSubscriber(wc);
+            });
+            wc.on('render-process-gone', () => removeInputFrameSubscriber(wc));
         }
         ensureInputFrameTimer();
     });
