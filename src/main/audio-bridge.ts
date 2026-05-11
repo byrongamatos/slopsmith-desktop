@@ -414,5 +414,11 @@ export function shutdownAudio(): void {
             audio.shutdown();
             try { console.log('[audio] Engine shut down'); } catch { /* console may be gone */ }
         } catch { /* silent fail during shutdown */ }
+        // Null the module so any subsequent IPC handlers reflect
+        // post-shutdown state (audio:isAvailable → false, the
+        // dispatchInputFrames null-check kicks in if a stray timer
+        // tick fires after teardown, etc.) instead of calling into a
+        // torn-down addon.
+        audio = null;
     }
 }

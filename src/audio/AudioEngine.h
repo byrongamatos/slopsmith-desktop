@@ -103,6 +103,13 @@ public:
     // callers on the main thread can copy out the most-recent N samples.
     // Capacity is a power of two so audio-thread wrap is a single mask.
     static constexpr int kInputFrameRingCapacity = 8192;
+    // Capacity must stay a power of two — the audio-thread store relies
+    // on `(write_index + i) & (capacity - 1)` for wraparound, which is
+    // only equivalent to modulo for powers of two. A static_assert keeps
+    // a future "let's bump the buffer to 10000" patch from silently
+    // turning the index into a wrong-direction offset.
+    static_assert((kInputFrameRingCapacity & (kInputFrameRingCapacity - 1)) == 0,
+                  "kInputFrameRingCapacity must be a power of two");
     // Default snapshot size matches notedetect's _ND_MIN_YIN_SAMPLES (4096
     // samples — enough for low-E autocorrelation at 48 kHz). Caller can
     // request fewer; anything larger than the ring capacity gets clamped.
