@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <utility>
 
 namespace
 {
@@ -98,15 +100,16 @@ void ChordScorer::ensureFft(int fftSize)
     fft = std::make_unique<juce::dsp::FFT>(order);
     currentFftSize = fftSize;
     currentFftOrder = order;
-    interleavedScratch.assign((size_t) (2 * fftSize), 0.0f);
+    fftScratch.assign((size_t) fftSize, juce::dsp::Complex<float>{0.0f, 0.0f});
     magnitudes.assign((size_t) ((fftSize >> 1) + 1), 0.0f);
 }
 
 void ChordScorer::computeMagnitudes(const float* buffer, int numSamples)
 {
-    // Zero the scratch — windowed buffer fills only the first `numSamples`
-    // real slots; the FFT reads all 2*fftSize floats.
-    std::fill(interleavedScratch.begin(), interleavedScratch.end(), 0.0f);
+    // Zero the scratch — the FFT reads all fftSize complex slots; the
+    // windowed input fills only the first `numSamples` of them.
+    std::fill(fftScratch.begin(), fftScratch.end(),
+              juce::dsp::Complex<float>{0.0f, 0.0f});
 
     // Hann-window the real part, leave imag at zero. Identical to the
     // JS implementation, including the `numSamples - 1` divisor (NOT
@@ -117,22 +120,19 @@ void ChordScorer::computeMagnitudes(const float* buffer, int numSamples)
     for (int i = 0; i < numSamples; ++i)
     {
         const float w = 0.5f * (1.0f - std::cos(invDen * (float) i));
-        interleavedScratch[(size_t) (2 * i)] = buffer[i] * w;
+        fftScratch[(size_t) i] = juce::dsp::Complex<float>{ buffer[i] * w, 0.0f };
     }
 
-    // Forward FFT over the full interleaved {re,im} scratch. JUCE's
-    // `perform` is in-place when the same pointer is passed for input
-    // and output, exactly matching the JS `_ndFftInPlace` shape.
-    fft->perform(reinterpret_cast<const juce::dsp::Complex<float>*>(interleavedScratch.data()),
-                 reinterpret_cast<juce::dsp::Complex<float>*>(interleavedScratch.data()),
-                 false);
+    // Forward FFT in-place — same Complex<float>* pointer as input and
+    // output, matching the JS `_ndFftInPlace` shape. No reinterpret_cast
+    // needed now that the scratch is already typed as complex bins.
+    fft->perform(fftScratch.data(), fftScratch.data(), false);
 
     const int halfBins = (currentFftSize >> 1) + 1;
     for (int k = 0; k < halfBins; ++k)
     {
-        const float re = interleavedScratch[(size_t) (2 * k)];
-        const float im = interleavedScratch[(size_t) (2 * k + 1)];
-        magnitudes[(size_t) k] = std::sqrt(re * re + im * im);
+        const auto& c = fftScratch[(size_t) k];
+        magnitudes[(size_t) k] = std::sqrt(c.real() * c.real() + c.imag() * c.imag());
     }
 }
 

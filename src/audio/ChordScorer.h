@@ -98,9 +98,14 @@ private:
     int currentFftSize = 0;
     int currentFftOrder = 0;
     std::unique_ptr<juce::dsp::FFT> fft;
-    // Interleaved {re, im} scratch, length 2 * fftSize. Hann-windowed
-    // input goes in the real slots; imag stays zero.
-    std::vector<float> interleavedScratch;
+    // FFT scratch as a vector of complex bins, length fftSize. Storing
+    // it as std::complex<float> (which juce::dsp::Complex aliases) lets
+    // us pass &scratch[0] to fft->perform() without reinterpret_cast'ing
+    // a float buffer through a stricter aliasing boundary — the C++
+    // standard only guarantees that a std::complex<T> is layout-
+    // compatible with T[2] in one direction (complex → T[2]), not the
+    // other, so a float* → complex* cast is undefined.
+    std::vector<juce::dsp::Complex<float>> fftScratch;
     // Magnitude spectrum, length fftSize/2 + 1 (Nyquist-inclusive).
     std::vector<float> magnitudes;
     double lastBinHz = 0.0;
