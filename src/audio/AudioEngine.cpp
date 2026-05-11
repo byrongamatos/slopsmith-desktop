@@ -597,27 +597,26 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         // input channel (0=left, 1=right) the buffer's channel 0 is
         // already that selected source, so we use it directly. When
         // selectedInputChannel is -1 ("mono mix") and the device has
-        // multiple input channels, the existing channel-copy loop
-        // above just passes the channels through — it does NOT
-        // produce a mono mix on its own, so we compute the average
-        // here for the ring buffer specifically. This matches the
-        // documented "-1 = both (mono mix)" semantics.
+        // multiple input channels, compute the average across the
+        // *input* channels with the same input gain the channel-copy
+        // loop above applied to the output buffer. This is
+        // independent of output topology — a mono output device or a
+        // surround output with zeroed extra channels would otherwise
+        // produce either no mix (output<=1) or a diluted one
+        // (output>input), both wrong.
         const uint64_t w = inputFrameRingWriteIndex.load(std::memory_order_relaxed);
         constexpr int kMask = kInputFrameRingCapacity - 1;
-        const bool mixMono = (selectedCh < 0)
-                             && (numInputChannels > 1)
-                             && (numOutputChannels > 1);
+        const bool mixMono = (selectedCh < 0) && (numInputChannels > 1);
         if (mixMono)
         {
-            const float invCh = 1.0f / (float) numOutputChannels;
+            const float invCh = 1.0f / (float) numInputChannels;
             for (int i = 0; i < numSamples; ++i)
             {
                 float mix = 0.0f;
-                for (int ch = 0; ch < numOutputChannels; ++ch)
-                    mix += buffer.getSample(ch, i);
-                mix *= invCh;
+                for (int ch = 0; ch < numInputChannels; ++ch)
+                    mix += inputData[ch][i];
                 inputFrameRing[(w + (uint64_t) i) & (uint64_t) kMask]
-                    .store(mix, std::memory_order_relaxed);
+                    .store(mix * invCh * inGain, std::memory_order_relaxed);
             }
         }
         else
