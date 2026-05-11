@@ -200,6 +200,28 @@ function createWindow(port: number): void {
         `).catch(() => {});
     });
 
+    // Block in-window navigation away from the renderer origin. The window
+    // ships with `webSecurity: false` so the renderer can load
+    // mixed-origin assets from the localhost server, but that same loose
+    // setting means a stray click on a same-window link (or a 30x
+    // redirect served through the local proxy) would still load a remote
+    // page in our chrome — same preload, same exposed IPC. The permission
+    // handler installed in startup() denies media/clipboard/etc for that
+    // case, but it doesn't stop the navigation itself.
+    //
+    // Allow only navigations whose target matches the resolved renderer
+    // origin. Anything else gets cancelled here and (via the
+    // setWindowOpenHandler below) re-routed to the user's default browser
+    // via shell.openExternal. Re-derive the predicate locally — the
+    // permission handler captured it in a closure that isn't exposed.
+    const isRendererOrigin = makeRendererOriginPredicate(port);
+    mainWindow.webContents.on('will-navigate', (event, navUrl) => {
+        if (isRendererOrigin(navUrl)) return;
+        event.preventDefault();
+        console.warn(`[main] Blocked in-window navigation to non-renderer origin: ${navUrl}`);
+        shell.openExternal(navUrl).catch(() => { /* user said no thanks */ });
+    });
+
     // Open external links in system browser
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
         shell.openExternal(url);
