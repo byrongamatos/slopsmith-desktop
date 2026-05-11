@@ -571,7 +571,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
     float inGain = inputGain.load();
     int selectedCh = selectedInputChannel.load();
 
-    // Copy input with gain, handling channel selection.
+    // Copy input with gain, handling channel selection. Track how
+    // many output channels we've filled so the "zero extras" pass
+    // below can clip to the right range — the broadcast branches
+    // fill all of them, the pass-through branch only fills the
+    // overlap.
+    int filledOutputChannels = 0;
     if (numInputChannels >= 2 && selectedCh >= 0 && selectedCh < numInputChannels)
     {
         // Single-channel mode (e.g. dry from Valeton GP-5 left channel).
@@ -579,6 +584,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
         for (int outCh = 0; outCh < numOutputChannels; ++outCh)
             for (int i = 0; i < numSamples; ++i)
                 buffer.setSample(outCh, i, inputData[selectedCh][i] * inGain);
+        filledOutputChannels = numOutputChannels;
     }
     else if (selectedCh < 0 && numInputChannels > 1)
     {
@@ -601,18 +607,23 @@ void AudioEngine::audioDeviceIOCallbackWithContext(
             for (int outCh = 0; outCh < numOutputChannels; ++outCh)
                 buffer.setSample(outCh, i, gained);
         }
+        filledOutputChannels = numOutputChannels;
     }
     else
     {
         // Pass-through: single-input device, or stereo in/out with no
         // explicit channel selection and no need to mix.
-        for (int ch = 0; ch < juce::jmin(numInputChannels, numOutputChannels); ++ch)
+        const int passThroughChannels = juce::jmin(numInputChannels, numOutputChannels);
+        for (int ch = 0; ch < passThroughChannels; ++ch)
             for (int i = 0; i < numSamples; ++i)
                 buffer.setSample(ch, i, inputData[ch][i] * inGain);
+        filledOutputChannels = passThroughChannels;
     }
 
-    // Zero extra output channels
-    for (int ch = numInputChannels; ch < numOutputChannels; ++ch)
+    // Zero anything we didn't fill. Previously this was hard-coded to
+    // start at numInputChannels, which on a 2-in/4-out broadcast
+    // config would have wiped the upper two channels we just wrote.
+    for (int ch = filledOutputChannels; ch < numOutputChannels; ++ch)
         buffer.clear(ch, 0, numSamples);
 
     // Metering: input level (pre-processing)
