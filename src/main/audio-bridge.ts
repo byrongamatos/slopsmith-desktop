@@ -179,21 +179,42 @@ export function initAudioBridge(mainWindow: BrowserWindow | null): void {
     // we don't burn IPC bandwidth when no one is listening.
 
     ipcMain.handle('audio:getSampleRate', () => {
-        return audio?.getSampleRate() ?? 48000;
+        // typeof guard covers the version-skew case where the JS/TS was
+        // updated but the native addon predates getSampleRate — without
+        // it, `audio.getSampleRate()` would throw rather than fall back.
+        if (audio && typeof audio.getSampleRate === 'function') {
+            try { return audio.getSampleRate(); } catch { /* fall through */ }
+        }
+        return 48000;
     });
 
     function dispatchInputFrames(): void {
-        // If the audio engine has gone away (init failure or shutdown),
-        // there's nothing to stream — drop every subscriber so we don't
-        // accumulate stale WebContents references waiting for an engine
-        // that won't come back, and stop the timer immediately.
-        if (!audio) {
+        // If the audio engine has gone away (init failure, shutdown, or
+        // a downlevel addon missing getInputFrame), there's nothing to
+        // stream — drop every subscriber so we don't accumulate stale
+        // WebContents references waiting for an engine that won't come
+        // back, and stop the timer immediately.
+        if (!audio || typeof audio.getInputFrame !== 'function') {
             inputFrameSubscribers.clear();
             stopInputFrameTimer();
             return;
         }
         if (inputFrameSubscribers.size === 0) return;
-        const samples: Float32Array | undefined = audio.getInputFrame(INPUT_FRAME_SAMPLES);
+        let samples: Float32Array | undefined;
+        try {
+            samples = audio.getInputFrame(INPUT_FRAME_SAMPLES);
+        } catch (e: unknown) {
+            // A throw from the native side means the addon is in a bad
+            // state (engine torn down underneath us, OOM, etc.). Bail
+            // out of dispatch the same way as the missing-method case
+            // rather than retrying every 50ms and re-throwing in the
+            // interval callback (which would unhandled-reject and crash
+            // the main process on some Electron versions).
+            console.warn(`[audio] input-frame dispatch failed: ${e instanceof Error ? e.message : String(e)}`);
+            inputFrameSubscribers.clear();
+            stopInputFrameTimer();
+            return;
+        }
         if (!samples || samples.length === 0) return;
         const seq = ++inputFrameSequence;
         for (const wc of inputFrameSubscribers) {

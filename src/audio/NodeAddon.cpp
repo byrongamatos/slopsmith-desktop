@@ -5,6 +5,7 @@
 #include <napi.h>
 #include <thread>
 #include <atomic>
+#include <cstring>
 
 #include "AudioEngine.h"
 #include "VSTHost.h"
