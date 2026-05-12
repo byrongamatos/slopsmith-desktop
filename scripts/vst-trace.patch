@@ -1,0 +1,147 @@
+diff --git a/modules/juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h b/modules/juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h
+index 7e2231007d..23bcdcd663 100644
+--- a/modules/juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h
++++ b/modules/juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h
+@@ -34,6 +34,10 @@
+ 
+ #pragma once
+ 
++// ── slopsmith VST trace patch (diag/vst-trace branch — DO NOT MERGE TO MAIN) ──
++// Instrumentation to diagnose Guitar Rig 6 fast-fail on Win11 24H2.
++#include "../../../../src/audio/VSTTrace.h"
++
+ #if JUCE_INTERNAL_HAS_VST3
+ 
+ #if (JUCE_LINUX || JUCE_BSD)
+@@ -588,20 +592,23 @@ struct VST3HostContextHeadless : public Vst::IComponentHandler,
+     inline tresult PLUGIN_API setDirty (TBool) override;
+ 
+     //==============================================================================
+-    tresult PLUGIN_API requestOpenEditor ([[maybe_unused]] FIDString name) override
++    tresult PLUGIN_API requestOpenEditor (FIDString name) override
+     {
+-        // This request cannot currently be surfaced in the JUCE public API
++        VST_TRACE("host.requestOpenEditor name=%s -> kResultFalse",
++                  name ? name : "(null)");
+         return kResultFalse;
+     }
+ 
+     tresult PLUGIN_API startGroupEdit() override
+     {
++        VST_TRACE("host.startGroupEdit -> kResultFalse (jassertfalse path)");
+         jassertfalse;
+         return kResultFalse;
+     }
+ 
+     tresult PLUGIN_API finishGroupEdit() override
+     {
++        VST_TRACE("host.finishGroupEdit -> kResultFalse (jassertfalse path)");
+         jassertfalse;
+         return kResultFalse;
+     }
+@@ -627,6 +634,7 @@ struct VST3HostContextHeadless : public Vst::IComponentHandler,
+     //==============================================================================
+     tresult PLUGIN_API getName (Vst::String128 name) override
+     {
++        VST_TRACE("host.getName -> %s", appName.toRawUTF8());
+         Steinberg::String str (appName.toUTF8());
+         str.copyTo (name, 0, 127);
+         return kResultOk;
+@@ -634,26 +642,34 @@ struct VST3HostContextHeadless : public Vst::IComponentHandler,
+ 
+     tresult PLUGIN_API createInstance (TUID cid, TUID iidToCreate, void** obj) override
+     {
++        VST_TRACE("host.createInstance cid=%s iid=%s",
++                  ::slopsmith_vst_trace::tuidHex(cid),
++                  ::slopsmith_vst_trace::tuidHex(iidToCreate));
++
+         *obj = nullptr;
+ 
+         if (! doUIDsMatch (cid, iidToCreate))
+         {
++            VST_TRACE("host.createInstance: UIDs don't match -> kInvalidArgument");
+             jassertfalse;
+             return kInvalidArgument;
+         }
+ 
+         if (doUIDsMatch (cid, Vst::IMessage::iid) && doUIDsMatch (iidToCreate, Vst::IMessage::iid))
+         {
++            VST_TRACE("host.createInstance: IMessage granted");
+             *obj = new Message;
+             return kResultOk;
+         }
+ 
+         if (doUIDsMatch (cid, Vst::IAttributeList::iid) && doUIDsMatch (iidToCreate, Vst::IAttributeList::iid))
+         {
++            VST_TRACE("host.createInstance: IAttributeList granted");
+             *obj = new AttributeList;
+             return kResultOk;
+         }
+ 
++        VST_TRACE("host.createInstance: unknown CID -> kNotImplemented");
+         jassertfalse;
+         return kNotImplemented;
+     }
+@@ -670,7 +686,7 @@ struct VST3HostContextHeadless : public Vst::IComponentHandler,
+     //==============================================================================
+     tresult PLUGIN_API queryInterface (const TUID iidToQuery, void** obj) override
+     {
+-        return testForMultiple (*this,
++        const tresult result = testForMultiple (*this,
+                                 iidToQuery,
+                                 UniqueBase<Vst::IComponentHandler>{},
+                                 UniqueBase<Vst::IComponentHandler2>{},
+@@ -682,6 +698,25 @@ struct VST3HostContextHeadless : public Vst::IComponentHandler,
+                                 UniqueBase<Linux::IRunLoop>{},
+                                #endif
+                                 SharedBase<FUnknown, Vst::IComponentHandler>{}).extract (obj);
++
++        // ── slopsmith vst-trace ── log every interface the plugin asks the
++        // host for. The most common "host environment validation failure"
++        // path in NI plugins is querying an interface they require, getting
++        // kNoInterface, and __fastfailing. This trace shows exactly what
++        // they want.
++        const char* known = "?";
++        if (FUnknownPrivate::iidEqual (iidToQuery, Vst::IComponentHandler::iid))     known = "IComponentHandler";
++        else if (FUnknownPrivate::iidEqual (iidToQuery, Vst::IComponentHandler2::iid)) known = "IComponentHandler2";
++        else if (FUnknownPrivate::iidEqual (iidToQuery, Vst::IComponentHandler3::iid)) known = "IComponentHandler3";
++        else if (FUnknownPrivate::iidEqual (iidToQuery, Vst::IContextMenuTarget::iid)) known = "IContextMenuTarget";
++        else if (FUnknownPrivate::iidEqual (iidToQuery, Vst::IHostApplication::iid))   known = "IHostApplication";
++        else if (FUnknownPrivate::iidEqual (iidToQuery, Vst::IUnitHandler::iid))       known = "IUnitHandler";
++        else if (FUnknownPrivate::iidEqual (iidToQuery, FUnknown::iid))                known = "FUnknown";
++        VST_TRACE("host.queryInterface(%s=%s) -> %s",
++                  known,
++                  ::slopsmith_vst_trace::tuidHex(iidToQuery),
++                  result == kResultOk ? "kResultOk" : "kNoInterface");
++        return result;
+     }
+ 
+     VST3PluginInstanceHeadless* getPlugin() const
+@@ -1646,15 +1681,26 @@ struct VST3ComponentHolder
+         if (factory->getClassInfo (classIdx, &info) != kResultOk)
+             return false;
+ 
++        VST_TRACE("VST3ComponentHolder.initialise: loading component cid=%s",
++                  ::slopsmith_vst_trace::tuidHex(info.cid));
++
+         if (! component.loadFrom (factory.get(), info.cid) || component == nullptr)
++        {
++            VST_TRACE("VST3ComponentHolder.initialise: factory.createInstance FAILED");
+             return false;
++        }
+ 
+         cidOfComponent = FUID (info.cid);
+ 
+-        if (warnOnFailure (component->initialize (host->getFUnknown())) != kResultOk)
++        VST_TRACE("VST3ComponentHolder.initialise: calling component->initialize(host)");
++        const auto initRes = component->initialize (host->getFUnknown());
++        VST_TRACE("VST3ComponentHolder.initialise: component->initialize returned %d", (int)initRes);
++
++        if (warnOnFailure (initRes) != kResultOk)
+             return false;
+ 
+         isComponentInitialised = true;
++        VST_TRACE("VST3ComponentHolder.initialise: complete");
+ 
+         return true;
+     }

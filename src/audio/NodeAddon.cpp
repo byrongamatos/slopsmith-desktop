@@ -783,6 +783,7 @@ static Napi::Value LoadVST(const Napi::CallbackInfo& info)
     std::unique_ptr<juce::AudioPluginInstance> instance;
     auto sr = engine->getCurrentSampleRate();
     auto bs = engine->getCurrentBlockSize();
+    VST_TRACE("LoadVST: path='%s' sr=%.0f bs=%d", pluginPath.c_str(), sr, bs);
     // Instantiate on the JUCE message thread so the plugin's GUI/COM state is
     // bound to the same thread that will later call createEditor(). On Windows
     // a mismatch causes an access violation inside the plugin's editor code

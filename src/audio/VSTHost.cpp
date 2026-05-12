@@ -1,4 +1,5 @@
 #include "VSTHost.h"
+#include "VSTTrace.h"
 
 VSTHost::VSTHost()
 {
@@ -185,8 +186,16 @@ std::unique_ptr<juce::AudioPluginInstance> VSTHost::loadPlugin(
 
     // Create instance synchronously
     juce::String error;
+    VST_TRACE("VSTHost.loadPlugin: createPluginInstance BEGIN  name='%s' format='%s' file='%s' sr=%.0f bs=%d",
+              matchedDesc.name.toRawUTF8(),
+              matchedDesc.pluginFormatName.toRawUTF8(),
+              matchedDesc.fileOrIdentifier.toRawUTF8(),
+              sampleRate, blockSize);
     auto instance = formatManager.createPluginInstance(
         matchedDesc, sampleRate, blockSize, error);
+    VST_TRACE("VSTHost.loadPlugin: createPluginInstance END    instance=%s error='%s'",
+              instance ? "OK" : "null",
+              error.toRawUTF8());
 
     if (!instance)
     {
