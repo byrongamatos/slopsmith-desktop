@@ -94,6 +94,11 @@ static Napi::Value Init(const Napi::CallbackInfo& info)
 {
     auto env = info.Env();
 
+    // Reset the shutdown latch so a JS-level init→shutdown→init cycle (e.g.
+    // a test harness recreating the engine) actually runs shutdown again
+    // instead of treating it as already-done.
+    alreadyShutDown.store(false, std::memory_order_release);
+
     // Start JUCE message thread first (no-op on macOS — see startJuceMessageThread)
     startJuceMessageThread();
 

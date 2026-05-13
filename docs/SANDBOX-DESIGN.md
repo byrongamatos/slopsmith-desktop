@@ -2,7 +2,7 @@
 
 Date: 2026-05-13
 Companion to: `DIAG-UPDATE.md`
-Status: design sketch (not yet implemented)
+Status: partially implemented (Windows v1, WIP); macOS/Linux pending
 
 ## 1. Topology
 
