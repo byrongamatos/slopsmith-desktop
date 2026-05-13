@@ -1,4 +1,5 @@
 #include "SubprocessHandle.h"
+#include "../VSTTrace.h"
 
 #if JUCE_WINDOWS
  #include <windows.h>
@@ -38,6 +39,7 @@ bool SubprocessHandle::start(const juce::String& exePath,
     si.wShowWindow = SW_HIDE; // detach console; the sandbox is GUI-only
 
     std::wstring wcmd = cmd.toWideCharPointer();
+    VST_TRACE("SubprocessHandle.start: CreateProcessW cmd='%s'", cmd.toRawUTF8());
     if (!CreateProcessW(
             nullptr, wcmd.data(),
             nullptr, nullptr, FALSE,
@@ -45,9 +47,13 @@ bool SubprocessHandle::start(const juce::String& exePath,
             nullptr, nullptr,
             &si, &impl->pi))
     {
-        errorOut = "CreateProcessW failed: " + juce::String((int)GetLastError());
+        DWORD err = GetLastError();
+        errorOut = "CreateProcessW failed: " + juce::String((int)err);
+        VST_TRACE("SubprocessHandle.start: CreateProcessW FAILED err=%lu", (unsigned long)err);
         return false;
     }
+    VST_TRACE("SubprocessHandle.start: spawned pid=%lu",
+              (unsigned long)impl->pi.dwProcessId);
     running.store(true, std::memory_order_release);
     cachedPid = (int)impl->pi.dwProcessId;
     onExitCb = std::move(onExit);
