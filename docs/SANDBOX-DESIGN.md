@@ -139,22 +139,22 @@ Float32, planar (channel0 then channel1 — matches JUCE's `AudioBuffer<float>`)
 
 Host audio thread:
 ```text
-1. Wait until (writeIdx - readIdx) < maxBlocks  (drop block + bump xruns if not)
-2. Copy input PCM + any MIDI to Ring A[writeIdx % maxBlocks]
-3. ++writeIdx (release)
+1. Wait until (inWriteIdx - inReadIdx) < maxBlocks  (drop block + bump xruns if not)
+2. Copy input PCM + any MIDI to Ring A[inWriteIdx % maxBlocks]
+3. ++inWriteIdx (release)
 4. SetEvent(audio-event-in)
 5. WaitForSingleObject(audio-event-out, timeout = blockSize / sampleRate * 2)
-6. Copy Ring B[readIdx % maxBlocks] into output buffer
-7. ++readIdx (release)
+6. Copy Ring B[outReadIdx % maxBlocks] into output buffer
+7. ++outReadIdx (release)
 ```
 
 Sandbox audio thread (or sandbox main thread's audio callback):
 ```text
 1. WaitForSingleObject(audio-event-in, INFINITE)
-2. Read input from Ring A[(readIdx) % maxBlocks]
+2. Read input from Ring A[inReadIdx % maxBlocks]
 3. processBlock(in, out) on the plugin
-4. Write output to Ring B[(writeIdx) % maxBlocks]
-5. ++writeIdx (release); SetEvent(audio-event-out)
+4. Write output to Ring B[outWriteIdx % maxBlocks]
+5. ++inReadIdx (release); ++outWriteIdx (release); SetEvent(audio-event-out)
 ```
 
 Both events are auto-reset. Worst-case added latency vs in-process: one block period
