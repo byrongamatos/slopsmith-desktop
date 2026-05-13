@@ -72,22 +72,18 @@ bool SubprocessHandle::start(const juce::String& exePath,
 
 void SubprocessHandle::shutdown(int timeoutMs)
 {
-    if (!running.load(std::memory_order_acquire))
+    if (running.load(std::memory_order_acquire))
     {
-        if (watcher.joinable())
-            watcher.join();
-        return;
+        // Try a clean shutdown: post WM_QUIT to any thread of the process. The
+        // sandbox's main thread exits its message loop on WM_QUIT. If that
+        // fails we fall through to TerminateProcess.
+        if (impl->pi.dwThreadId != 0)
+            PostThreadMessageW(impl->pi.dwThreadId, WM_QUIT, 0, 0);
+
+        DWORD wait = WaitForSingleObject(impl->pi.hProcess, (DWORD)timeoutMs);
+        if (wait != WAIT_OBJECT_0)
+            TerminateProcess(impl->pi.hProcess, 1);
     }
-
-    // Try a clean shutdown: post WM_QUIT to any thread of the process. The
-    // sandbox's main thread exits its message loop on WM_QUIT. If that fails
-    // we fall through to TerminateProcess.
-    if (impl->pi.dwThreadId != 0)
-        PostThreadMessageW(impl->pi.dwThreadId, WM_QUIT, 0, 0);
-
-    DWORD wait = WaitForSingleObject(impl->pi.hProcess, (DWORD)timeoutMs);
-    if (wait != WAIT_OBJECT_0)
-        TerminateProcess(impl->pi.hProcess, 1);
 
     if (watcher.joinable())
     {
@@ -97,6 +93,8 @@ void SubprocessHandle::shutdown(int timeoutMs)
             watcher.join();
     }
 
+    // Always close handles — when the watcher detected a crash, `running` is
+    // already false here, but the kernel handles are still ours to release.
     if (impl->pi.hThread)  { CloseHandle(impl->pi.hThread);  impl->pi.hThread = nullptr; }
     if (impl->pi.hProcess) { CloseHandle(impl->pi.hProcess); impl->pi.hProcess = nullptr; }
 }

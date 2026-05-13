@@ -72,6 +72,9 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return hasEditorCached; }
 
+    // Idempotent — callers don't need to track editor state themselves.
+    void notifyEditorClosing();
+
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram(int) override {}

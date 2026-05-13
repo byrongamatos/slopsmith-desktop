@@ -31,6 +31,12 @@ namespace {
            #endif
         }
 
+        ~SandboxedEditor() override
+        {
+            if (auto* proc = dynamic_cast<SandboxedProcessor*>(getAudioProcessor()))
+                proc->notifyEditorClosing();
+        }
+
         void parentHierarchyChanged() override
         {
            #if JUCE_WINDOWS
@@ -177,12 +183,25 @@ bool SandboxedProcessor::initialise(juce::String& errorOut)
 
 void SandboxedProcessor::teardown(const juce::String& reason)
 {
-    if (!alive.exchange(false, std::memory_order_acq_rel)) return;
-    auto cb = onCrash;
-    if (control) control->stop();
+    // Resource closers are idempotent. Only the user-facing onCrash callback
+    // is gated on alive's prior state so failed startups (alive never set)
+    // still release the subprocess / pipe / shm they allocated.
+    const bool wasAlive = alive.exchange(false, std::memory_order_acq_rel);
+    auto cb = wasAlive ? onCrash : nullptr;
+
+    if (control)    control->stop();
     if (subprocess) subprocess->shutdown(1500);
-    if (audio) audio->close();
+    if (audio)      audio->close();
+
     if (cb) cb(reason);
+}
+
+void SandboxedProcessor::notifyEditorClosing()
+{
+    if (!control) return;
+    if (!editorOpen.exchange(false, std::memory_order_acq_rel)) return;
+    if (!isAlive()) return;
+    control->postNoReply(op::kCloseEditor, {});
 }
 
 bool SandboxedProcessor::isAlive() const noexcept
