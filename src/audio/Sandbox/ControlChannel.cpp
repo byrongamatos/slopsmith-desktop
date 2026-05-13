@@ -85,6 +85,13 @@ bool ControlChannel::connectClientSide(const juce::String& pipeName,
 bool ControlChannel::start(EventCallback evCb,
                             std::function<void(const juce::String&)> disconnectCb)
 {
+    // Reassigning a joinable std::thread aborts via std::terminate, so refuse
+    // a second start. Callers should stop() then re-create the channel.
+    if (ioThread.joinable() || alive.load(std::memory_order_acquire))
+        return false;
+    if (!impl || impl->pipe == INVALID_HANDLE_VALUE)
+        return false;
+
     onEvent = std::move(evCb);
     onDisconnect = std::move(disconnectCb);
     alive.store(true, std::memory_order_release);
@@ -98,20 +105,26 @@ bool ControlChannel::start(EventCallback evCb,
 
 void ControlChannel::stop()
 {
-    bool wasAlive = alive.exchange(false, std::memory_order_acq_rel);
+    alive.store(false, std::memory_order_release);
+
+    // CancelIoEx unblocks the I/O thread's pending read so it can exit. The
+    // handle must stay valid until the thread has returned — closing it
+    // first is a TOCTOU on the in-flight read.
     if (impl && impl->pipe != INVALID_HANDLE_VALUE)
-    {
-        // CancelIoEx unblocks the read on the I/O thread.
         CancelIoEx(impl->pipe, nullptr);
-        CloseHandle(impl->pipe);
-        impl->pipe = INVALID_HANDLE_VALUE;
-    }
+
     if (ioThread.joinable())
     {
         if (std::this_thread::get_id() == ioThread.get_id())
             ioThread.detach();
         else
             ioThread.join();
+    }
+
+    if (impl && impl->pipe != INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(impl->pipe);
+        impl->pipe = INVALID_HANDLE_VALUE;
     }
 
     // Fail any in-flight requests so callers don't hang.
@@ -122,7 +135,6 @@ void ControlChannel::stop()
         catch (const std::future_error&) {}
     }
     pending.clear();
-    (void)wasAlive;
 }
 
 // Helper for synchronous overlapped I/O — issues the operation, waits for it.
