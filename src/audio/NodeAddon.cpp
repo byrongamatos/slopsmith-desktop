@@ -802,6 +802,8 @@ static Napi::Value LoadVST(const Napi::CallbackInfo& info)
     // 1) Try the out-of-process sandbox path for plugins on the denylist.
     //    This is a no-op on macOS/Linux until those sandbox PRs land — the
     //    stub factory returns nullptr and we fall through.
+    bool sandboxRequired = false;
+    juce::String sandboxErr;
     {
         juce::PluginDescription probeDesc;
         probeDesc.fileOrIdentifier = juce::String(pluginPath);
@@ -810,7 +812,7 @@ static Napi::Value LoadVST(const Napi::CallbackInfo& info)
         probeDesc.name = juce::File(juce::String(pluginPath)).getFileNameWithoutExtension();
         if (slopsmith::sandbox::shouldSandbox(probeDesc))
         {
-            juce::String sandboxErr;
+            sandboxRequired = true;
             processor = slopsmith::sandbox::tryLoadSandboxed(
                 probeDesc, sr, bs, sandboxErr);
             if (!processor)
@@ -819,7 +821,17 @@ static Napi::Value LoadVST(const Napi::CallbackInfo& info)
         }
     }
 
-    // 2) Fallback: in-process JUCE load (today's path). Instantiate on the
+    // 2) If the plugin is on the denylist, sandboxing is *required* — falling
+    //    back to in-process is what crashed the addon to begin with (the
+    //    motivation for the denylist). Surface the failure to the caller.
+    if (sandboxRequired && !processor)
+    {
+        error = "sandbox load failed: "
+              + (sandboxErr.isEmpty() ? juce::String("unknown error") : sandboxErr);
+        return Napi::Number::New(env, -1);
+    }
+
+    // 3) Otherwise: in-process JUCE load (today's path). Instantiate on the
     //    JUCE message thread for the COM-apartment reason documented above.
     if (!processor)
     {
