@@ -318,6 +318,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argv == nullptr)
+    {
+        hostLogf("CommandLineToArgvW failed err=%lu",
+                 (unsigned long)GetLastError());
+        return 1;
+    }
     Args parsed;
     if (!parseArgs(argc, argv, parsed))
     {

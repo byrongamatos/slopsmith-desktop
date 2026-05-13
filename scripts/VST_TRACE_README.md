@@ -1,68 +1,57 @@
-# VST3 host trace — diagnostic build instructions
+# VST trace — runtime-gated diagnostic logging
 
-This branch (`diag/vst-trace`) instruments the JUCE VST3 host context so we
-can see exactly what a misbehaving plugin (currently: Guitar Rig 6 v6.x on
-Windows 11 24H2) asks the host for right before it `__fastfail`s. Every
-host callback the plugin invokes is appended to:
+`src/audio/VSTTrace.h` defines a `VST_TRACE(...)` macro the addon, the VST
+host code, and the sandbox subprocess all use to emit timestamped lines into
+`%TEMP%\slopsmith-vst-trace.log` (Linux/macOS: `/tmp/slopsmith-vst-trace.log`)
+and stderr. It's compiled into every build but no-ops at runtime unless the
+`SLOPSMITH_SANDBOX_DEBUG` environment variable is set to a non-empty value
+other than `"0"`.
 
-```text
-%TEMP%\slopsmith-vst-trace.log
-```
+The first call caches the env var, so flipping the variable mid-process has
+no effect — set it before launching the host process (`node ...`,
+`electron ...`, or the sandbox subprocess via the parent's environment).
 
-with immediate flush, so even a process-abort that bypasses SEH still
-leaves the last line on disk.
+## What you'll see when it's enabled
 
-**Do not merge this branch.** It bloats stderr/log output and patches the
-vendored JUCE submodule.
+* `[ctrl] ...` — control-channel framing from `ControlChannel.cpp`
+  (`ConnectNamedPipe`, `readFrame got N bytes`, `event: ready`, error codes).
+* Sandbox subprocess startup steps from `slopsmith-vst-host.exe`:
+  `args ok`, `audio shm opened`, `control pipe connected`,
+  `plugin loaded: <name>`, `sending ready event`.
+* `LoadVST: path='...'`, `SubprocessHandle.start: spawned pid=N`, the full
+  CreateProcess command line.
+* `VSTHost.loadPlugin / VST3ComponentHolder.initialise` host-callback traces
+  from the JUCE VST3 host context (in-process load path only).
 
-## Windows build (one-shot)
+The sandbox host also opens a per-PID file at
+`%TEMP%\slopsmith-vst-host-<pid>.log` regardless of the env var — that's for
+"the subprocess died and I have no console" diagnosis; it's small and only
+written from one process.
 
-From a *Developer Command Prompt for VS 2022* in the repo root:
-
-```cmd
-git checkout diag/vst-trace
-git submodule update --init --recursive
-
-REM Apply the JUCE patch (the change can't live in the submodule itself
-REM because we don't own its remote)
-cd JUCE
-git apply ..\scripts\vst-trace.patch
-cd ..
-
-npm install
-npm run build:audio
-```
-
-The build produces `build\Release\slopsmith_audio.node`. Copy that file
-over `C:\Program Files\Slopsmith\resources\app.asar.unpacked\build\Release\slopsmith_audio.node`
-(closing Slopsmith first), then launch Slopsmith and reproduce the GR6
-crash.
-
-Easier alternative if you don't want to touch the installed app: run
-the dev build instead.
+## Turning it on
 
 ```cmd
-npm run dev
+:: Windows — set before launching node / electron / the desktop app:
+set SLOPSMITH_SANDBOX_DEBUG=1
+node load-gr6.js
 ```
 
-That starts Electron pointing at this working tree directly.
+```bash
+# macOS / Linux:
+SLOPSMITH_SANDBOX_DEBUG=1 node load-gr6.js
+```
 
-## Collecting the log
-
-After Slopsmith crashes:
+## Reading the log
 
 ```cmd
+:: Windows
 type %TEMP%\slopsmith-vst-trace.log
 ```
 
-The interesting region is the last ~50 lines before the file ends. Paste
-those back to the agent.
-
-## Reverting
-
-```cmd
-cd JUCE
-git checkout -- modules/juce_audio_processors_headless/format_types/juce_VST3PluginFormatImpl.h
-cd ..
-git checkout main
+```bash
+# macOS / Linux
+cat /tmp/slopsmith-vst-trace.log
 ```
+
+The file is appended to across runs; truncate it (or `del`) between sessions
+when bisecting.
