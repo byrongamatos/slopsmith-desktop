@@ -58,6 +58,17 @@ juce::var decode(const void* data, size_t bytes, juce::String* errorOut)
     // UTF-8 sequences (e.g. a plugin name with non-ASCII chars). The buffer
     // is not NUL-terminated, so bounding strictly by byte length matters.
     auto* begin = static_cast<const char*>(data);
+    // Validate well-formedness before constructing the String. Today we
+    // only consume frames from a subprocess we spawned, so this is mostly
+    // defensive — but downstream `toString()` / `toRawUTF8()` callers
+    // (e.g. dispatchRequest kOpenEditor) treat the String as valid UTF-8
+    // without re-checking. Catch malformed input here so a misbehaving
+    // peer can't corrupt the host-side state.
+    if (! juce::CharPointer_UTF8::isValidString(begin, (int)bytes))
+    {
+        if (errorOut) *errorOut = "malformed utf-8 in message body";
+        return {};
+    }
     juce::String text(juce::CharPointer_UTF8(begin),
                       juce::CharPointer_UTF8(begin + bytes));
     juce::var parsed;

@@ -173,6 +173,16 @@ struct HostState
 
 juce::var pluginMetadata(juce::AudioPluginInstance& p)
 {
+    // Caller contract: invoke from a thread that is NOT racing with
+    // processBlock on the audio thread. Today only WinMain's startup
+    // path calls this (before the audio worker is spawned), which is
+    // safe. The getLatencySamples / getTotalNumIn/OutChannels reads
+    // below are unsynchronized against in-plugin parameter mutation
+    // that some plugins perform inside processBlock; if a future
+    // caller adds a mid-session metadata refresh from dispatchRequest
+    // (control I/O thread), route it through the planned audio-
+    // thread-sync queue instead — same deferral that covers kPrepare /
+    // kSetParameter / kGetState / kSetState.
     juce::DynamicObject::Ptr obj(new juce::DynamicObject());
     // Advertise the protocol version the sandbox was built against so the
     // host can detect version skew at handshake time with a clear error,
@@ -425,12 +435,17 @@ void dispatchRequest(HostState& st, int requestId, const juce::String& op,
             PostQuitMessage(0);
         }))
         {
-            // If the queue is already gone (e.g. another path raced us into
-            // shutdown), still flip `running` so the audio thread + WinMain
-            // dispatch loop exit. Editor/window will be destroyed by the
-            // WinMain post-loop cleanup if the message thread is gone — at
-            // that point AsyncUpdater/MessageManagerLock aren't a concern
-            // because the loop is no longer pumping.
+            // Queue already gone — the lambda would never run. Tear down
+            // synchronously on this thread: with the MessageManager dead,
+            // AsyncUpdater/MessageManagerLock no longer have anywhere to
+            // dispatch to, so the "must run on message thread" constraint
+            // (which the lambda enforces in the happy path) doesn't apply.
+            // Doing it inline here preserves the documented kShutdown
+            // invariant — editor/window destroyed BEFORE WinMain's post-
+            // loop cleanup — instead of regressing to the leak/deadlock
+            // path the lambda was added to avoid.
+            st.editorWindow.reset();
+            st.editor.reset();
             st.running.store(false, std::memory_order_release);
         }
     }
@@ -615,10 +630,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             PostQuitMessage(0);
         }))
         {
-            // Queue already torn down — flip `running` directly so the
-            // dispatch loop and audio thread exit; the editor/window will
-            // be destroyed by WinMain's post-loop cleanup (safe because at
-            // that point nothing else is using the message thread anyway).
+            // Queue already torn down — destroy editor/window inline (same
+            // reasoning as the kShutdown fallback: with the MessageManager
+            // dead the "must run on message thread" constraint no longer
+            // applies). Avoids regressing to the leak/deadlock path the
+            // callAsync was added to avoid.
+            st.editorWindow.reset();
+            st.editor.reset();
             st.running.store(false, std::memory_order_release);
         }
     }))

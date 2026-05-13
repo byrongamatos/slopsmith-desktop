@@ -104,7 +104,24 @@ void SubprocessHandle::shutdown(int timeoutMs)
     if (watcher.joinable())
     {
         if (std::this_thread::get_id() == watcher.get_id())
+        {
+            // Self-join would deadlock. Detaching leaves the watcher
+            // thread alive briefly past this destructor's return, which
+            // would normally be a UAF on captured `this`. Two things
+            // make it safe here:
+            //   1. SandboxedProcessor::teardown drops the onCrash
+            //      callback BEFORE invoking subprocess->shutdown(), so
+            //      the watcher's onExitCb fires into a no-op when this
+            //      path is reached.
+            //   2. The watcher's remaining work after onExitCb is just
+            //      `running.store(false)` and falling off the lambda —
+            //      no member-state access beyond the atomic.
+            // If a future refactor adds member access in the watcher
+            // after onExitCb, revisit this — a `resourcesReleased`
+            // latch + shared_ptr captured into the lambda is the
+            // standard fix.
             watcher.detach();
+        }
         else
             watcher.join();
     }

@@ -262,6 +262,23 @@ void AudioChannel::close()
 // over shared memory. std::atomic_ref gives us atomic access without UB from
 // reinterpret_casting the uint64_t storage to std::atomic<uint64_t>* (the
 // latter relies on layout-compatibility C++ doesn't promise).
+//
+// atomic_ref<T>::required_alignment may exceed alignof(T) on some
+// platforms (cache-line-sized for lock-free ops). Header fields are
+// annotated `alignas(8)` and that's enough on x86_64 MSVC/clang where
+// uint64_t atomic ops are 8-byte aligned, but if a future build targets
+// a platform where required_alignment is larger this static_assert will
+// fail at compile time rather than producing UB at runtime.
+// Header fields are `alignas(8) uint64_t`. As long as
+// atomic_ref<uint64_t>::required_alignment is <= 8 (true on every
+// platform we currently target), the atomic_ref construction below is
+// well-defined. If a future build targets a platform where it exceeds 8,
+// this fails at compile time — bump the alignas on the header fields
+// to atomic_ref<uint64_t>::required_alignment to fix.
+static_assert(std::atomic_ref<uint64_t>::required_alignment <= 8,
+              "AudioShmHeader uint64_t fields are alignas(8); bump the "
+              "alignas to std::atomic_ref<uint64_t>::required_alignment "
+              "or atomic_ref construction is undefined behavior");
 static std::atomic_ref<uint64_t> atomicAt(uint64_t& slot)
 {
     return std::atomic_ref<uint64_t>(slot);

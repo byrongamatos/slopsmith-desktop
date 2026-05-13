@@ -53,15 +53,18 @@ inline std::FILE* logFile()
         if (n == 0 || n >= sizeof(path)) {
             n = GetEnvironmentVariableA("USERPROFILE", path, sizeof(path));
         }
-        if (n == 0 || n >= sizeof(path)) {
-            std::snprintf(path, sizeof(path), "C:\\slopsmith-vst-trace.log");
-        } else {
+        if (n > 0 && n < sizeof(path)) {
             std::strncat(path, "\\slopsmith-vst-trace.log", sizeof(path) - n - 1);
         }
+        // If both env vars failed, leave `path` empty — writing to the
+        // drive root requires admin on a default Windows install and the
+        // sandbox host's per-PID log made the same decision. fopen(nullptr-
+        // equivalent path) returns NULL, which the rest of the code handles
+        // cleanly.
 #else
         std::snprintf(path, sizeof(path), "/tmp/slopsmith-vst-trace.log");
 #endif
-        std::FILE* fp = std::fopen(path, "a");
+        std::FILE* fp = path[0] ? std::fopen(path, "a") : nullptr;
         if (fp) {
             std::fprintf(fp, "\n========== slopsmith-vst-trace opened (pid=%lu) ==========\n",
                          (unsigned long)
