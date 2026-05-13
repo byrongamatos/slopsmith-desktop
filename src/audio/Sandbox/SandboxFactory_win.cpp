@@ -74,7 +74,10 @@ juce::File resolveSandboxExe()
                                              devOverride, sizeof(devOverride));
     if (dn > 0 && dn < sizeof(devOverride))
     {
-        juce::File explicitPath(juce::String(devOverride));
+        // Use brace-init to avoid the most-vexing-parse on
+        // `File explicitPath(juce::String(devOverride));`, which MSVC
+        // reads as a function declaration.
+        const juce::File explicitPath{ juce::String(devOverride) };
         if (explicitPath.existsAsFile()) return explicitPath;
     }
 
