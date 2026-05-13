@@ -92,7 +92,6 @@ ops are on the PR-body follow-up checklist.
 |---|---|
 | `ready` | `{ pluginName, manufacturer, numParams, hasEditor, latencySamples }` (first message after pipe connect) |
 | `parameterChanged` | `{ index, value }` — plugin moved its own knobs (automation, GUI) |
-| `editorOpened` | `{ hwnd, w, h }` — reply payload to `openEditor`; included here so the same name is used for the symmetric request-completion event |
 | `editorClosed` | `{ reason }` — user closed window via X, or plugin self-closed |
 | `log` | `{ level, message }` — surface plugin stderr / JUCE asserts |
 | `error` | `{ code, message }` — non-fatal recoverable error |

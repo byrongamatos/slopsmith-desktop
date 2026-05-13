@@ -18,8 +18,14 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <atomic>
 #include <cstdarg>
+#include <cstdio>
 #include <cstring>
 #include <thread>
+
+// `CommandLineToArgvW` / `LocalFree` from shellapi.h come in via JUCE's
+// transitive Windows headers below. Including shellapi.h directly here
+// triggers a syntax error in the Win11 SDK (10.0.26100.0) when the JUCE
+// preamble hasn't run yet, so the transitive dep is intentional.
 
 #if !JUCE_WINDOWS
  #error "slopsmith-vst-host is Windows-only for now."

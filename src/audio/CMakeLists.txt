@@ -16,7 +16,7 @@ set(AUDIO_SOURCES
 
 # Plugin sandbox — out-of-process VST3 host for plugins that don't survive
 # in-process loading (notably Qt5-using plugins from Native Instruments;
-# see DIAG-UPDATE.md in the PR description for the diagnosis).
+# see docs/VST-SANDBOX-DIAG.md for the diagnosis).
 #
 # Cross-platform note (constitution VIII): only the Windows implementation
 # ships in this PR. macOS / Linux fall back to in-process loading via the
