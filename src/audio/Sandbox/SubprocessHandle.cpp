@@ -83,9 +83,16 @@ void SubprocessHandle::shutdown(int timeoutMs)
 {
     if (running.load(std::memory_order_acquire))
     {
-        // Try a clean shutdown: post WM_QUIT to any thread of the process. The
-        // sandbox's main thread exits its message loop on WM_QUIT. If that
-        // fails we fall through to TerminateProcess.
+        // Try a clean shutdown: post WM_QUIT to the subprocess's initial
+        // thread (`pi.dwThreadId` from PROCESS_INFORMATION). PostThreadMessageW
+        // is per-TID, not per-process — this works because vst-host's WinMain
+        // runs the JUCE message loop on the initial thread (the audio worker
+        // is a child thread that doesn't pump messages), so WM_QUIT lands on
+        // the right pump. If a future refactor moves the message loop off the
+        // initial thread, this needs the new TID or to switch to a
+        // process-wide signalling mechanism (named event, etc.). If
+        // dwThreadId is zero (start() failed mid-way) we skip and let the
+        // wait+TerminateProcess below clean up.
         if (impl->pi.dwThreadId != 0)
             PostThreadMessageW(impl->pi.dwThreadId, WM_QUIT, 0, 0);
 

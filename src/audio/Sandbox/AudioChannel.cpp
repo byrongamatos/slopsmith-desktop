@@ -144,6 +144,27 @@ bool AudioChannel::openSandboxSide(const Names& names, juce::String& errorOut)
         close();
         return false;
     }
+    // Validate dims against compile-time caps BEFORE computing bytesPerSlot()
+    // and expectedTotal. Without this, pathological header values (corrupted
+    // or malicious mapping that passed magic+protocolVersion) can overflow
+    // uint64_t in `maxBlockSamples * maxChannels * 4` or
+    // `2 * maxBlocks * ringBytesPerSlot`, defeating the inEnd/outEnd bounds
+    // check below and pointing inputRing/outputRing past the actual mapping.
+    // Host-side spawn validates these at SandboxedProcessor::spawn but the
+    // sandbox side has been trusting whatever the mapping says.
+    if (impl->header->maxBlocks == 0 || impl->header->maxBlocks > kAudioMaxBlocks
+        || impl->header->maxBlockSamples == 0
+        || impl->header->maxBlockSamples > kAudioMaxBlockSamples
+        || impl->header->maxChannels == 0
+        || impl->header->maxChannels > kAudioMaxChannels)
+    {
+        errorOut = "audio shm dims exceed protocol caps: blocks="
+                 + juce::String((int64_t)impl->header->maxBlocks)
+                 + " blockSamples=" + juce::String((int64_t)impl->header->maxBlockSamples)
+                 + " channels=" + juce::String((int64_t)impl->header->maxChannels);
+        close();
+        return false;
+    }
     cachedDims.maxBlocks = impl->header->maxBlocks;
     cachedDims.maxBlockSamples = impl->header->maxBlockSamples;
     cachedDims.maxChannels = impl->header->maxChannels;

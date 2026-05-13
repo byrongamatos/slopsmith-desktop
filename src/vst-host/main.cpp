@@ -426,11 +426,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             if (up > 0 && up < sizeof(userprofile)
                        && (size_t)up + (size_t)suffixLen < sizeof(path))
                 std::snprintf(path, sizeof(path), "%s%s", userprofile, suffix);
-            else
-                std::snprintf(path, sizeof(path),
-                              "C:\\slopsmith-vst-host-%lu.log", pid);
+            // No C:\ fallback — writing to the drive root requires admin on
+            // a default Windows install, so the previous fallback would
+            // silently lose the diagnostic anyway. Leaving `path` empty
+            // makes fopen return NULL, which the call below handles cleanly
+            // (g_hostLog stays null, hostLogf becomes a no-op).
         }
-        g_hostLog = std::fopen(path, "a");
+        g_hostLog = path[0] ? std::fopen(path, "a") : nullptr;
         if (g_hostLog)
             hostLogf("\n==== slopsmith-vst-host pid=%lu starting ====", pid);
     }
