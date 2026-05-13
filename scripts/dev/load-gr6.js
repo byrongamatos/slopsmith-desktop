@@ -12,13 +12,23 @@ console.log('[test] loading addon from', addonPath);
 const addon = require(addonPath);
 console.log('[test] addon loaded; methods:', Object.keys(addon).slice(0, 10).join(', '), '...');
 
-// Global watchdog — any blocking addon call (loadVST, openPluginEditor,
-// closePluginEditor, shutdown) will trip this if it hangs, so the CI signal
-// is "fail" instead of "test job times out at 60 min". 60 s is well past the
-// real spawn budget (Qt-using plugins take ~10-15 s on a cold cache).
+// Global watchdog — best-effort coverage for *asynchronous* hang paths
+// (event-loop livelocks, setTimeout-stacked cleanup). Cannot pre-empt a
+// *synchronous* native block: loadVST and addon.shutdown both park the
+// event loop via dispatchOnMessageThread → done->wait(15000) inside the
+// addon, so if those block the timer callback never fires. The
+// synchronous-native-hang case is bounded by JUCE's own 15 s timeout
+// inside the addon; a proper supervisor-process + SIGKILL watchdog
+// belongs in the CI harness (tracked in the test-suite follow-up).
+//
+// The timer callback hard-exits — do NOT call addon.shutdown() here,
+// it would block on the same dispatchOnMessageThread the addon is
+// already stuck in and deadlock the process.
 const WATCHDOG_MS = 60000;
-const watchdog = setTimeout(() => failExit(
-    `global watchdog tripped after ${WATCHDOG_MS} ms`), WATCHDOG_MS);
+const watchdog = setTimeout(() => {
+    console.error(`[test] FATAL: watchdog tripped after ${WATCHDOG_MS} ms (async hang)`);
+    process.exit(1);
+}, WATCHDOG_MS);
 
 function failExit(msg) {
     if (msg) console.log('[test] FAIL:', msg);
