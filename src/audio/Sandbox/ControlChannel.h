@@ -1,8 +1,12 @@
 // ControlChannel — request/response + event messaging between the host
 // (Slopsmith Desktop) and a sandbox subprocess.
 //
-// Transport: Windows named pipe (PIPE_TYPE_MESSAGE). Posix transport TBD when
-// the macOS / Linux sandbox PRs land.
+// Transport: Windows named pipe in byte mode (PIPE_TYPE_BYTE |
+// PIPE_READMODE_BYTE) with an explicit `[u32 length-LE][body]` framing
+// layer. PIPE_TYPE_MESSAGE was tried first but dropped because the
+// sandbox's `ready` frame wasn't being delivered to the host I/O thread
+// reliably — see commit 2cb9ae9. Posix transport TBD when the macOS /
+// Linux sandbox PRs land.
 //
 // Threading model: one I/O thread inside the channel reads frames and dispatches
 // them to the event callback or to the matching pending request future. Callers

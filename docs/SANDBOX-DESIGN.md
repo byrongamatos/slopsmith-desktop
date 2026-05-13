@@ -54,7 +54,11 @@ spin up their QML engine on a cold cache), kill and report failure.
 
 ## 3. Control channel — named pipe
 
-Transport: `PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE`, bidirectional, async I/O.
+Transport: `PIPE_TYPE_BYTE | PIPE_READMODE_BYTE`, bidirectional, overlapped I/O,
+with an explicit `[u32 length-LE][body]` framing layer the channel applies on
+top. (Message-mode was the original plan, but the sandbox's first `ready` frame
+wasn't being delivered to the host I/O thread reliably; byte mode + length
+prefixes is what shipped — see commit `2cb9ae9`.)
 
 Framing per message: `[u32 length-LE] [json body]`. JSON is small and human-readable
 for logging; the audio fast path is *not* on this channel.

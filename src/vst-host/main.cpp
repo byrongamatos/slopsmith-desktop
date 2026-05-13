@@ -78,9 +78,11 @@ public:
         setUsingNativeTitleBar(true);
         setResizable(true, false);
         setContentNonOwned(ed, true);
-        // Position offscreen until the host reparents us.
+        // Size first, then move offscreen. centreWithSize() would otherwise
+        // reposition the window onto the active display before the host has
+        // a chance to reparent it, producing a visible flash.
+        setSize(ed->getWidth(), ed->getHeight());
         setTopLeftPosition(-32000, -32000);
-        centreWithSize(ed->getWidth(), ed->getHeight());
     }
     void closeButtonPressed() override {}
 };
@@ -288,6 +290,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
             char buf[512]; std::snprintf(buf, sizeof(buf), "  argv[%d]=%ls", i, argv[i]);
             hostLogf("%s", buf);
         }
+        LocalFree(argv);
         return 2;
     }
     LocalFree(argv);

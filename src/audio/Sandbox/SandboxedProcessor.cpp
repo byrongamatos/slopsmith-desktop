@@ -202,7 +202,17 @@ bool SandboxedProcessor::initialise(juce::String& errorOut)
         errorOut = "sandbox did not become ready within timeout";
         return false;
     }
-    return readyF.get();
+    if (!readyF.get())
+    {
+        // The promise was resolved with false by failHandshake (subprocess
+        // exit, control disconnect, etc.). errorOut was likely empty until
+        // now — surface a concrete reason so callers don't see "unknown".
+        if (errorOut.isEmpty())
+            errorOut = "sandbox handshake failed before ready (subprocess "
+                       "exit or control-pipe disconnect)";
+        return false;
+    }
+    return true;
 }
 
 void SandboxedProcessor::teardown(const juce::String& reason)
@@ -293,7 +303,14 @@ void SandboxedProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
     midiMessages.clear();
 
-    audio->pushBlock(/*isOutputRing=*/false, buffer, n);
+    if (!audio->pushBlock(/*isOutputRing=*/false, buffer, n))
+    {
+        // Input ring full — sandbox isn't keeping up. Don't wait the full
+        // pop timeout (which would extend the dropout); zero output and
+        // exit. xruns was incremented inside pushBlock.
+        buffer.clear();
+        return;
+    }
     if (!audio->popBlock(/*isOutputRing=*/true, buffer, n,
                          /*timeoutMs=*/ (int)juce::jmax(2.0,
                              1000.0 * n / juce::jmax(1, (int)spawnConfig.audio.sampleRate) * 4.0)))

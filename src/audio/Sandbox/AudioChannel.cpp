@@ -131,7 +131,8 @@ bool AudioChannel::openSandboxSide(const Names& names, juce::String& errorOut)
                                     names.evtToSandbox.toWideCharPointer());
     if (!impl->evtToHost || !impl->evtToSandbox)
     {
-        errorOut = "OpenEvent failed";
+        errorOut = "OpenEvent failed: " + juce::String((int)GetLastError());
+        close();
         return false;
     }
     return true;
