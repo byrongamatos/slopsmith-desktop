@@ -56,8 +56,8 @@ setTimeout(() => {
         return;
     }
 
-    if (slot < 0) {
-        failExit('loadVST returned negative slot');
+    if (!Number.isInteger(slot) || slot < 0) {
+        failExit('loadVST returned invalid slot: ' + String(slot));
         return;
     }
 
