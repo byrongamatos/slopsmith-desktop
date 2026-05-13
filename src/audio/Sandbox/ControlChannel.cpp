@@ -170,7 +170,10 @@ static DWORD overlappedChunk(HANDLE pipe, bool isWrite, void* buf,
             DWORD drained = 0;
             GetOverlappedResult(pipe, &ov, &drained, TRUE);
             CloseHandle(ov.hEvent);
-            SetLastError(WAIT_TIMEOUT);
+            // ERROR_TIMEOUT (1460) is the Win32 last-error sentinel; the
+            // WaitForSingleObject return value WAIT_TIMEOUT (258) is in a
+            // different number space and would be misleading in diagnostics.
+            SetLastError(ERROR_TIMEOUT);
             return 0;
         }
     }
@@ -397,15 +400,23 @@ void ControlChannel::ioLoop()
 void ControlChannel::failWith(const juce::String& reason)
 {
     if (!alive.exchange(false, std::memory_order_acq_rel)) return;
-    auto cb = onDisconnect;
-    if (cb) cb(reason);
-    // Fail any in-flight requests.
-    std::lock_guard<std::mutex> lk(pendingMutex);
-    for (auto& [id, p] : pending)
+
+    // Drain internal state BEFORE invoking the callback. The disconnect
+    // handler is allowed to tear down higher-level owners that destroy this
+    // ControlChannel (typical teardown chain: SandboxedProcessor::teardown
+    // → ControlChannel::stop → ~ControlChannel), so any member access after
+    // the callback returns would be use-after-free.
     {
-        try { p->promise.set_value({}); } catch (...) {}
+        std::lock_guard<std::mutex> lk(pendingMutex);
+        for (auto& [id, p] : pending)
+        {
+            try { p->promise.set_value({}); } catch (...) {}
+        }
+        pending.clear();
     }
-    pending.clear();
+
+    auto cb = std::move(onDisconnect);
+    if (cb) cb(reason);
 }
 
 juce::var ControlChannel::request(const char* op, const juce::var& args,
