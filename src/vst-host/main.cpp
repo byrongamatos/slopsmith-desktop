@@ -403,9 +403,15 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 
     // Pump the main message loop. JUCE's MessageManager is bound to this
     // thread (the OS main thread), which is the key correctness property
-    // for Qt-using plugins per the diag PoC.
-    while (st.running.load(std::memory_order_acquire))
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    // for Qt-using plugins per the diag PoC. We also exit when JUCE sees a
+    // stop message — SubprocessHandle::shutdown sends WM_QUIT to this
+    // thread, and the JUCE handler treats it as a stop request; without
+    // this check the loop would keep going until `st.running` is also
+    // cleared by some other path.
+    auto* mm = juce::MessageManager::getInstance();
+    while (st.running.load(std::memory_order_acquire)
+           && !mm->hasStopMessageBeenSent())
+        mm->runDispatchLoopUntil(20);
 
     st.audioThread.join();
     st.editorWindow.reset();
