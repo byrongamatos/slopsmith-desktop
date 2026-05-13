@@ -23,17 +23,16 @@ const juce::StringArray kDefaultNeedsSandboxManufacturers = {
 // Filename substrings of NI plugins we know need the sandbox. At LoadVST
 // time we don't have the manufacturer yet (that would require scanning the
 // plugin first), so we match the file name. Case-insensitive.
+// v1 is effect-plugins only: the sandbox path doesn't yet deliver MIDI to
+// the plugin (op::kMidiEvent is no-op'd in vst-host and gets sent over the
+// control channel, which the audio-shm MIDI follow-up replaces). Forcing
+// MIDI-driven instruments through here would silently make them mute.
+//
+// Once inline MIDI lands in PR #2, add the other NI offenders back:
+//   "Massive", "Reaktor", "Kontakt", "Battery", "Komplete Kontrol",
+//   "FM8", "Absynth", "Maschine", "Monark".
 const juce::StringArray kDefaultNeedsSandboxFilenames = {
     "Guitar Rig",
-    "Massive",
-    "Reaktor",
-    "Kontakt",
-    "Battery",
-    "Komplete Kontrol",
-    "FM8",
-    "Absynth",
-    "Maschine",
-    "Monark",
 };
 
 juce::File resolveSandboxExe()
