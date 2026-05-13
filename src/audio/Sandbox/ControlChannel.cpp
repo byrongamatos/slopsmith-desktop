@@ -40,7 +40,7 @@ bool ControlChannel::createServerSide(juce::String& pipeNameOut,
 
     HANDLE h = CreateNamedPipeW(
         pipeName.toWideCharPointer(),
-        PIPE_ACCESS_DUPLEX,
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
         /*maxInstances*/ 1,
         kControlPipeBufferBytes,
@@ -65,7 +65,9 @@ bool ControlChannel::connectClientSide(const juce::String& pipeName,
     HANDLE h = CreateFileW(
         pipeName.toWideCharPointer(),
         GENERIC_READ | GENERIC_WRITE,
-        0, nullptr, OPEN_EXISTING, 0, nullptr);
+        0, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OVERLAPPED,
+        nullptr);
 
     if (h == INVALID_HANDLE_VALUE)
     {
@@ -123,6 +125,34 @@ void ControlChannel::stop()
     (void)wasAlive;
 }
 
+// Helper for synchronous overlapped I/O — issues the operation, waits for it.
+// Returns true if `bytesPerOp` were transferred successfully.
+static bool overlappedTransfer(HANDLE pipe, bool isWrite, void* buf, DWORD bytesPerOp)
+{
+    OVERLAPPED ov{};
+    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    BOOL ok = isWrite
+        ? WriteFile(pipe, buf, bytesPerOp, nullptr, &ov)
+        : ReadFile (pipe, buf, bytesPerOp, nullptr, &ov);
+    DWORD lastErr = ok ? 0 : GetLastError();
+    if (!ok && lastErr != ERROR_IO_PENDING)
+    {
+        CloseHandle(ov.hEvent);
+        SetLastError(lastErr);
+        return false;
+    }
+    DWORD transferred = 0;
+    if (!GetOverlappedResult(pipe, &ov, &transferred, TRUE))
+    {
+        DWORD err = GetLastError();
+        CloseHandle(ov.hEvent);
+        SetLastError(err);
+        return false;
+    }
+    CloseHandle(ov.hEvent);
+    return transferred == bytesPerOp;
+}
+
 bool ControlChannel::writeFrame(const juce::MemoryBlock& body)
 {
     std::lock_guard<std::mutex> lk(writeMutex);
@@ -130,14 +160,13 @@ bool ControlChannel::writeFrame(const juce::MemoryBlock& body)
     if (body.getSize() > kMaxControlMessageBytes) return false;
 
     uint32_t lenLE = (uint32_t)body.getSize();
-    DWORD written = 0;
-    if (!WriteFile(impl->pipe, &lenLE, sizeof(lenLE), &written, nullptr)
-        || written != sizeof(lenLE))
+    if (!overlappedTransfer(impl->pipe, true, &lenLE, sizeof(lenLE)))
         return false;
     if (body.getSize() > 0)
     {
-        if (!WriteFile(impl->pipe, body.getData(), (DWORD)body.getSize(),
-                       &written, nullptr) || written != body.getSize())
+        if (!overlappedTransfer(impl->pipe, true,
+                                const_cast<void*>(body.getData()),
+                                (DWORD)body.getSize()))
             return false;
     }
     return true;
@@ -151,16 +180,10 @@ bool ControlChannel::readFrame(juce::MemoryBlock& out)
         return false;
     }
     uint32_t lenLE = 0;
-    DWORD got = 0;
-    if (!ReadFile(impl->pipe, &lenLE, sizeof(lenLE), &got, nullptr))
+    if (!overlappedTransfer(impl->pipe, false, &lenLE, sizeof(lenLE)))
     {
-        CTL_TRACE("readFrame: ReadFile(len) failed err=%lu got=%lu",
-                  (unsigned long)GetLastError(), (unsigned long)got);
-        return false;
-    }
-    if (got != sizeof(lenLE))
-    {
-        CTL_TRACE("readFrame: short ReadFile(len) got=%lu", (unsigned long)got);
+        CTL_TRACE("readFrame: ReadFile(len) failed err=%lu",
+                  (unsigned long)GetLastError());
         return false;
     }
     if (lenLE > kMaxControlMessageBytes)
@@ -170,11 +193,10 @@ bool ControlChannel::readFrame(juce::MemoryBlock& out)
     }
     out.setSize(lenLE, false);
     if (lenLE == 0) return true;
-    if (!ReadFile(impl->pipe, out.getData(), lenLE, &got, nullptr) || got != lenLE)
+    if (!overlappedTransfer(impl->pipe, false, out.getData(), (DWORD)lenLE))
     {
-        CTL_TRACE("readFrame: ReadFile(body len=%lu) failed err=%lu got=%lu",
-                  (unsigned long)lenLE, (unsigned long)GetLastError(),
-                  (unsigned long)got);
+        CTL_TRACE("readFrame: ReadFile(body len=%lu) failed err=%lu",
+                  (unsigned long)lenLE, (unsigned long)GetLastError());
         return false;
     }
     return true;
@@ -183,15 +205,28 @@ bool ControlChannel::readFrame(juce::MemoryBlock& out)
 void ControlChannel::ioLoop()
 {
     CTL_TRACE("ioLoop entered (isServer=%d)", (int)impl->isServer);
-    // Server side: wait for the sandbox to connect. ConnectNamedPipe is
-    // synchronous (no overlapped) — it returns when either the client connects
-    // or the pipe handle is closed via stop().
+    // Server side: wait for the sandbox to connect. Now overlapped because
+    // the pipe was opened with FILE_FLAG_OVERLAPPED — synchronous wait via
+    // GetOverlappedResult.
     if (impl->isServer && impl->pipe != INVALID_HANDLE_VALUE)
     {
-        if (!ConnectNamedPipe(impl->pipe, nullptr)
-            && GetLastError() != ERROR_PIPE_CONNECTED)
+        OVERLAPPED ov{};
+        ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        BOOL ok = ConnectNamedPipe(impl->pipe, &ov);
+        DWORD err = ok ? 0 : GetLastError();
+        if (!ok && err == ERROR_IO_PENDING)
         {
-            DWORD err = GetLastError();
+            DWORD t = 0;
+            ok = GetOverlappedResult(impl->pipe, &ov, &t, TRUE);
+            if (!ok) err = GetLastError();
+        }
+        else if (!ok && err == ERROR_PIPE_CONNECTED)
+        {
+            ok = TRUE;
+        }
+        CloseHandle(ov.hEvent);
+        if (!ok)
+        {
             CTL_TRACE("ConnectNamedPipe failed err=%lu", (unsigned long)err);
             failWith(kReasonReadError + " (connect)");
             return;
