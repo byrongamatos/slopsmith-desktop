@@ -105,6 +105,10 @@ private:
 
     std::atomic<bool> alive{false};
     std::atomic<bool> editorOpen{false};
+    // Single-fire latch so resource closers only run on the first teardown
+    // path that reaches them, even if destructor + watcher onExit fire
+    // concurrently from different threads.
+    std::atomic<bool> resourcesReleased{false};
 
     std::unique_ptr<SubprocessHandle> subprocess;
     std::unique_ptr<ControlChannel> control;

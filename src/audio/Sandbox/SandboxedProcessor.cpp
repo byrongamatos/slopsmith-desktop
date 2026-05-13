@@ -183,15 +183,20 @@ bool SandboxedProcessor::initialise(juce::String& errorOut)
 
 void SandboxedProcessor::teardown(const juce::String& reason)
 {
-    // Resource closers are idempotent. Only the user-facing onCrash callback
-    // is gated on alive's prior state so failed startups (alive never set)
-    // still release the subprocess / pipe / shm they allocated.
     const bool wasAlive = alive.exchange(false, std::memory_order_acq_rel);
     auto cb = wasAlive ? onCrash : nullptr;
 
-    if (control)    control->stop();
-    if (subprocess) subprocess->shutdown(1500);
-    if (audio)      audio->close();
+    // The closers themselves are individually idempotent, but running them
+    // concurrently from the destructor and the subprocess-exit watcher races
+    // on CloseHandle. Gate the whole block on a single-fire latch.
+    bool expected = false;
+    if (resourcesReleased.compare_exchange_strong(expected, true,
+                                                  std::memory_order_acq_rel))
+    {
+        if (control)    control->stop();
+        if (subprocess) subprocess->shutdown(1500);
+        if (audio)      audio->close();
+    }
 
     if (cb) cb(reason);
 }
