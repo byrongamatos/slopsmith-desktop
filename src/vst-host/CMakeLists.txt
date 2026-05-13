@@ -56,7 +56,12 @@ if(MSVC)
 endif()
 
 # Drop the binary next to the addon for easy lookup by SandboxFactory_win.cpp.
+# Use the per-config variant so the Visual Studio generator doesn't append
+# a second $<CONFIG> suffix (which would yield build/Release/Release/...).
 set_target_properties(slopsmith-vst-host PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG          "${CMAKE_BINARY_DIR}/Release"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE        "${CMAKE_BINARY_DIR}/Release"
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/Release"
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL     "${CMAKE_BINARY_DIR}/Release"
     OUTPUT_NAME "slopsmith-vst-host"
 )

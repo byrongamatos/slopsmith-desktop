@@ -20,6 +20,22 @@ const juce::StringArray kDefaultNeedsSandboxManufacturers = {
     "Native Instruments GmbH",
 };
 
+// Filename substrings of NI plugins we know need the sandbox. At LoadVST
+// time we don't have the manufacturer yet (that would require scanning the
+// plugin first), so we match the file name. Case-insensitive.
+const juce::StringArray kDefaultNeedsSandboxFilenames = {
+    "Guitar Rig",
+    "Massive",
+    "Reaktor",
+    "Kontakt",
+    "Battery",
+    "Komplete Kontrol",
+    "FM8",
+    "Absynth",
+    "Maschine",
+    "Monark",
+};
+
 juce::File resolveSandboxExe()
 {
     // Packaged: resources/bin/slopsmith-vst-host.exe relative to the addon DLL.
@@ -46,7 +62,18 @@ juce::File resolveSandboxExe()
 
 bool shouldSandbox(const juce::PluginDescription& desc)
 {
-    return kDefaultNeedsSandboxManufacturers.contains(desc.manufacturerName);
+    if (kDefaultNeedsSandboxManufacturers.contains(desc.manufacturerName))
+        return true;
+
+    // Filename match: useful at LoadVST time before we have the manufacturer.
+    juce::String basename = juce::File(desc.fileOrIdentifier)
+                                .getFileNameWithoutExtension();
+    for (auto& needle : kDefaultNeedsSandboxFilenames)
+    {
+        if (basename.containsIgnoreCase(needle))
+            return true;
+    }
+    return false;
 }
 
 std::unique_ptr<juce::AudioProcessor> tryLoadSandboxed(
