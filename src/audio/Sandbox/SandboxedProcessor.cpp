@@ -94,8 +94,14 @@ SandboxedProcessor::~SandboxedProcessor()
     // Destruction is a deliberate teardown, not a crash. Drop the onCrash
     // callback before teardown so it doesn't fire — consumers reasonably
     // assume onCrash means "the sandbox died unexpectedly".
-    onCrash = nullptr;
+    setOnCrash(nullptr);
     teardown("destructor");
+}
+
+void SandboxedProcessor::setOnCrash(CrashCallback cb)
+{
+    std::lock_guard<std::mutex> lock(onCrashMutex);
+    onCrash = std::move(cb);
 }
 
 std::unique_ptr<SandboxedProcessor> SandboxedProcessor::spawn(const SpawnConfig& cfg,
@@ -228,7 +234,15 @@ bool SandboxedProcessor::initialise(juce::String& errorOut)
 void SandboxedProcessor::teardown(const juce::String& reason)
 {
     const bool wasAlive = alive.exchange(false, std::memory_order_acq_rel);
-    auto cb = wasAlive ? onCrash : nullptr;
+    // Copy under the mutex so a concurrent setOnCrash() can't race with
+    // std::function's internals. Invoking happens later (outside the lock)
+    // so a callback that re-enters setOnCrash doesn't deadlock.
+    CrashCallback cb;
+    if (wasAlive)
+    {
+        std::lock_guard<std::mutex> lock(onCrashMutex);
+        cb = onCrash;
+    }
 
     // The closers themselves are individually idempotent, but running them
     // concurrently from the destructor and the subprocess-exit watcher races

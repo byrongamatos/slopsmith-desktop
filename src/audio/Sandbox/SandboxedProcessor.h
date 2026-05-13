@@ -27,6 +27,7 @@
 #include <memory>
 #include <atomic>
 #include <functional>
+#include <mutex>
 
 #include "Protocol.h"
 
@@ -65,8 +66,11 @@ public:
     bool isAlive() const noexcept;
 
     // Callback fired when the subprocess unexpectedly exits or its control
-    // pipe breaks. Always invoked from a background thread.
-    std::function<void(const juce::String& reason)> onCrash;
+    // pipe breaks. Always invoked from a background thread; mutex-guarded
+    // so concurrent assignment from the owner thread + read from the I/O
+    // thread don't race on std::function's internal state.
+    using CrashCallback = std::function<void(const juce::String& reason)>;
+    void setOnCrash(CrashCallback cb);
 
     // juce::AudioProcessor overrides ────────────────────────────────────────
     const juce::String getName() const override { return spawnName; }
@@ -129,6 +133,9 @@ private:
     std::unique_ptr<SubprocessHandle> subprocess;
     std::unique_ptr<ControlChannel> control;
     std::unique_ptr<AudioChannel> audio;
+
+    std::mutex   onCrashMutex;
+    CrashCallback onCrash;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SandboxedProcessor)
 };
