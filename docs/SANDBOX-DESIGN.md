@@ -1,7 +1,7 @@
 # Slopsmith plugin-sandbox — IPC + lifecycle design
 
 Date: 2026-05-13
-Companion to: `DIAG-UPDATE.md`
+Companion to: `docs/VST-SANDBOX-DIAG.md`
 Status: partially implemented (Windows v1, WIP); macOS/Linux pending
 
 ## 1. Topology
@@ -84,6 +84,7 @@ carry `requestId: null`.
 |---|---|
 | `ready` | `{ pluginName, manufacturer, numParams, hasEditor, latencySamples }` (first message after pipe connect) |
 | `parameterChanged` | `{ index, value }` — plugin moved its own knobs (automation, GUI) |
+| `editorOpened` | `{ hwnd, w, h }` — reply payload to `openEditor`; included here so the same name is used for the symmetric request-completion event |
 | `editorClosed` | `{ reason }` — user closed window via X, or plugin self-closed |
 | `log` | `{ level, message }` — surface plugin stderr / JUCE asserts |
 | `error` | `{ code, message }` — non-fatal recoverable error |
@@ -113,13 +114,24 @@ struct Header {
     uint32_t maxBlockSamples;    // capped at e.g. 1024
     uint32_t maxChannels;        // 2 for stereo
     uint32_t sampleRate;
-    std::atomic<uint64_t> writeIdx;   // host advances
-    std::atomic<uint64_t> readIdx;    // sandbox advances
+    // Per-direction indices — needed so input (host→sandbox) and output
+    // (sandbox→host) producers/consumers don't share state.
+    std::atomic<uint64_t> inWriteIdx;   // host produces ring A
+    std::atomic<uint64_t> inReadIdx;    // sandbox consumes ring A
+    std::atomic<uint64_t> outWriteIdx;  // sandbox produces ring B
+    std::atomic<uint64_t> outReadIdx;   // host consumes ring B
     // diagnostic
     std::atomic<uint64_t> xruns;
     std::atomic<uint64_t> dropouts;
 };
 ```
+
+> **Impl status:** the v1 Windows code in `src/audio/Sandbox/AudioChannel.cpp`
+> currently uses a single `writeIdx/readIdx` pair shared across both rings. It
+> works for the strictly-serial `processBlock` round-trip (host writes input,
+> waits, sandbox writes output, host reads), but is *not* safe for concurrent
+> full-duplex use. Splitting into the per-direction pairs above is part of the
+> follow-up "MIDI through audio shm" PR alongside sample-accurate automation.
 
 Float32, planar (channel0 then channel1 — matches JUCE's `AudioBuffer<float>`).
 
