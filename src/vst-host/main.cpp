@@ -485,6 +485,16 @@ void dispatchRequest(HostState& st, int requestId, const juce::String& op,
 
     if (op == op::kPrepare)
     {
+        // Require a loaded plugin so a misordered host call (kPrepare before
+        // anything is loaded — today loadPlugin happens at WinMain and is
+        // mandatory before control.start, so this should never happen) is
+        // loud rather than a silent ok with skipped prepareToPlay. Mirrors
+        // the no-plugin guards in kSetBlockSize / kSetState / kSetParameter.
+        if (!st.plugin)
+        {
+            reply(false, {}, "no plugin loaded");
+            return;
+        }
         // Both sr and bs come from JSON-deserialised juce::var — could be
         // double NaN, ±inf, or out-of-int-range. Read as double first and
         // validate finiteness + range BEFORE the narrowing int cast.
@@ -529,17 +539,13 @@ void dispatchRequest(HostState& st, int requestId, const juce::String& op,
         }
         st.sampleRate.store((int)sr, std::memory_order_release);
         st.blockSize.store(bs,       std::memory_order_release);
-        if (st.plugin)
-        {
-            st.plugin->setNonRealtime(false);
-            st.plugin->prepareToPlay(sr, bs);
-        }
+        st.plugin->setNonRealtime(false);
+        st.plugin->prepareToPlay(sr, bs);
         // `ok` is already on the envelope via wire::makeReply — keeping it
         // off the result object so the schema stays uniform across ops
         // (kOpenEditor/kGetState/etc. don't double up either).
         juce::DynamicObject::Ptr res(new juce::DynamicObject());
-        res->setProperty("latencySamples",
-            st.plugin ? st.plugin->getLatencySamples() : 0);
+        res->setProperty("latencySamples", st.plugin->getLatencySamples());
         reply(true, juce::var(res.get()));
     }
     else if (op == op::kSetBlockSize)
@@ -1077,6 +1083,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         stopAudioWorker();
         // Same fast-fail signal as the loadPlugin failure path: best-effort
         // goodbye so the host doesn't burn its 30s handshake timeout.
+        // Safe even after start() failure — connectClientSide opened the
+        // pipe earlier in WinMain and start() only spins up the I/O
+        // thread, so the underlying handle is valid; ControlChannel::
+        // writeFrame is mutex-guarded and short-circuits on
+        // INVALID_HANDLE_VALUE so the worst case is a false return.
         st.control.sendEvent(event::kGoodbye, {});
         return 6;
     }

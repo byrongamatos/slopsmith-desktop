@@ -330,6 +330,15 @@ namespace
 bool AudioChannel::pushBlock(bool isOutputRing, const juce::AudioBuffer<float>& src,
                              int numSamples)
 {
+    // Input-direction pushes MUST go through pushInputBlock (which publishes
+    // the slot's MidiQueue alongside the audio). Calling pushBlock(false,…)
+    // directly would leave whatever MIDI count was in the slot from a prior
+    // pushInputBlock and the next popInputBlock would replay those stale
+    // events against fresh audio. Today the only input producer is
+    // SandboxedProcessor::processBlock and it always calls pushInputBlock;
+    // assert here so a future regression that swaps in pushBlock fails loudly
+    // in debug rather than silently corrupting MIDI delivery.
+    jassert(isOutputRing);
     if (!impl->header) return false;
     auto idx = indicesFor(*impl->header, isOutputRing);
     auto writeIdx = atomicAt(idx.write);
@@ -489,6 +498,16 @@ bool AudioChannel::pushInputBlock(const juce::AudioBuffer<float>& src,
     const auto slot = w % impl->header->maxBlocks;
     auto& queue = impl->midiQueues[slot];
 
+    // Compute the truncated sample count up front so the MIDI loop below
+    // can clamp event frames against the SAME bound the audio copy uses.
+    // If the caller passed numSamples > maxSamples, both halves truncate
+    // to maxSamples consistently — otherwise the sandbox would receive
+    // MIDI frames pointing past the end of the audio it actually got.
+    const int maxCh      = (int)impl->header->maxChannels;
+    const int maxSamples = (int)impl->header->maxBlockSamples;
+    const int channels   = juce::jmin(maxCh, src.getNumChannels());
+    const int samples    = juce::jmin(maxSamples, numSamples);
+
     // 1. Pack MIDI into the slot's queue. The slot is owned by the host
     //    until we publish the new inWriteIdx below, so writes here are
     //    private — no need for the relaxed-clear-then-release-store on
@@ -521,11 +540,12 @@ bool AudioChannel::pushInputBlock(const juce::AudioBuffer<float>& src,
             continue;
         }
         auto& ev = queue.events[written];
-        // Clamp frame to [0, numSamples-1]: the sandbox passes ev.frame to
-        // juce::MidiBuffer::addEvent, and a frame past the block boundary
-        // would land in a future block (or trigger plugin-side asserts).
+        // Clamp frame to [0, samples-1] — `samples` is the truncated audio
+        // count, so a MIDI event past it would point past the block the
+        // plugin actually receives. The sandbox passes ev.frame to
+        // juce::MidiBuffer::addEvent.
         const int clampedFrame = juce::jlimit(0,
-                                              juce::jmax(0, numSamples - 1),
+                                              juce::jmax(0, samples - 1),
                                               meta.samplePosition);
         ev.frame = (uint32_t)clampedFrame;
         ev.size  = (uint32_t)rawSize;
@@ -541,10 +561,6 @@ bool AudioChannel::pushInputBlock(const juce::AudioBuffer<float>& src,
     // 2. Copy audio into the same slot of the input ring.
     auto bytesPerSlot = impl->header->ringBytesPerSlot;
     auto* dst = impl->inputRing + slot * (bytesPerSlot / sizeof(float));
-    const int maxCh      = (int)impl->header->maxChannels;
-    const int maxSamples = (int)impl->header->maxBlockSamples;
-    const int channels   = juce::jmin(maxCh, src.getNumChannels());
-    const int samples    = juce::jmin(maxSamples, numSamples);
     for (int ch = 0; ch < channels; ++ch)
     {
         auto* slotCh = dst + ch * maxSamples;
