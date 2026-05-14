@@ -17,6 +17,7 @@ struct AudioChannel::Impl
     AudioShmHeader* header = nullptr;
     float* inputRing = nullptr;   // host writes, sandbox reads
     float* outputRing = nullptr;  // sandbox writes, host reads
+    MidiQueue* midiQueues = nullptr; // [maxBlocks], one per input slot
 };
 
 AudioChannel::AudioChannel() : impl(std::make_unique<Impl>()) {}
@@ -62,13 +63,17 @@ bool AudioChannel::createHostSide(const AudioDimensions& dims, Names& namesOut,
     impl->header->maxBlockSamples = dims.maxBlockSamples;
     impl->header->maxChannels = dims.maxChannels;
     impl->header->sampleRate = dims.sampleRate;
-    impl->header->writeIdx = 0;
-    impl->header->readIdx = 0;
+    impl->header->inWriteIdx  = 0;
+    impl->header->inReadIdx   = 0;
+    impl->header->outWriteIdx = 0;
+    impl->header->outReadIdx  = 0;
     impl->header->xruns = 0;
     impl->header->dropouts = 0;
     impl->header->ringBytesPerSlot = dims.bytesPerSlot();
     impl->header->inputRingOffset  = sizeof(AudioShmHeader);
     impl->header->outputRingOffset = impl->header->inputRingOffset
+                                   + uint64_t(dims.maxBlocks) * dims.bytesPerSlot();
+    impl->header->midiQueueOffset  = impl->header->outputRingOffset
                                    + uint64_t(dims.maxBlocks) * dims.bytesPerSlot();
 
     // Release fence so all the header writes above are visible before the
@@ -83,6 +88,11 @@ bool AudioChannel::createHostSide(const AudioDimensions& dims, Names& namesOut,
     auto* base = reinterpret_cast<char*>(impl->view);
     impl->inputRing  = reinterpret_cast<float*>(base + impl->header->inputRingOffset);
     impl->outputRing = reinterpret_cast<float*>(base + impl->header->outputRingOffset);
+    impl->midiQueues = reinterpret_cast<MidiQueue*>(base + impl->header->midiQueueOffset);
+    // Zero-initialise the per-slot MidiQueues so a producer's first publish
+    // doesn't have to clear count/overflow bookkeeping.
+    std::memset(impl->midiQueues, 0,
+                sizeof(MidiQueue) * (size_t)dims.maxBlocks);
 
     impl->evtToHost = CreateEventW(
         nullptr, /*manualReset*/FALSE, /*initial*/FALSE,
@@ -240,6 +250,7 @@ bool AudioChannel::openSandboxSide(const Names& names, juce::String& errorOut)
     auto* base = reinterpret_cast<char*>(impl->view);
     impl->inputRing  = reinterpret_cast<float*>(base + impl->header->inputRingOffset);
     impl->outputRing = reinterpret_cast<float*>(base + impl->header->outputRingOffset);
+    impl->midiQueues = reinterpret_cast<MidiQueue*>(base + impl->header->midiQueueOffset);
 
     impl->evtToHost    = OpenEventW(EVENT_ALL_ACCESS, FALSE,
                                     names.evtToHost.toWideCharPointer());
@@ -263,6 +274,7 @@ void AudioChannel::close()
     impl->header = nullptr;
     impl->inputRing = nullptr;
     impl->outputRing = nullptr;
+    impl->midiQueues = nullptr;
 }
 
 // std::atomic_ref needs C++20 (P0019, finalised in libstdc++ 11+ and recent
@@ -293,12 +305,33 @@ static std::atomic_ref<uint64_t> atomicAt(uint64_t& slot)
     return std::atomic_ref<uint64_t>(slot);
 }
 
+static std::atomic_ref<uint32_t> atomicAt32(uint32_t& slot)
+{
+    return std::atomic_ref<uint32_t>(slot);
+}
+
+namespace
+{
+    // Pick the right (write, read) index pair for a direction. Input ring
+    // (host → sandbox) is produced by host / consumed by sandbox; output
+    // ring (sandbox → host) is the inverse.
+    struct RingIndices { uint64_t& write; uint64_t& read; };
+
+    RingIndices indicesFor(AudioShmHeader& h, bool isOutputRing)
+    {
+        return isOutputRing
+             ? RingIndices{ h.outWriteIdx, h.outReadIdx }
+             : RingIndices{ h.inWriteIdx,  h.inReadIdx  };
+    }
+}
+
 bool AudioChannel::pushBlock(bool isOutputRing, const juce::AudioBuffer<float>& src,
                              int numSamples)
 {
     if (!impl->header) return false;
-    auto writeIdx = atomicAt(impl->header->writeIdx);
-    auto readIdx  = atomicAt(impl->header->readIdx);
+    auto idx = indicesFor(*impl->header, isOutputRing);
+    auto writeIdx = atomicAt(idx.write);
+    auto readIdx  = atomicAt(idx.read);
     uint64_t w = writeIdx.load(std::memory_order_relaxed);
     uint64_t r = readIdx.load(std::memory_order_acquire);
     if (w - r >= impl->header->maxBlocks)
@@ -355,8 +388,9 @@ bool AudioChannel::popBlock(bool isOutputRing, juce::AudioBuffer<float>& dst,
 {
     if (!impl->header) return false;
     HANDLE evt = isOutputRing ? impl->evtToHost : impl->evtToSandbox;
-    auto writeIdx = atomicAt(impl->header->writeIdx);
-    auto readIdx  = atomicAt(impl->header->readIdx);
+    auto idx = indicesFor(*impl->header, isOutputRing);
+    auto writeIdx = atomicAt(idx.write);
+    auto readIdx  = atomicAt(idx.read);
 
     // Check indices BEFORE waiting. SetEvent on an auto-reset event is not
     // counting: if the producer signals twice in a row (queue 2 blocks),
@@ -411,6 +445,180 @@ bool AudioChannel::popBlock(bool isOutputRing, juce::AudioBuffer<float>& dst,
 
     readIdx.store(r + 1, std::memory_order_release);
     return true;
+}
+
+bool AudioChannel::pushInputBlock(const juce::AudioBuffer<float>& src,
+                                  const juce::MidiBuffer& midi,
+                                  int numSamples)
+{
+    // Inlined audio + MIDI publish so the slot's MidiQueue is published
+    // alongside the audio under the same inWriteIdx release. Earlier this
+    // method delegated to pushBlock(false, ...) for the audio half, but
+    // pushBlock used to clobber `count` to 0 between our MIDI publish and
+    // the inWriteIdx bump — every MIDI event was being dropped.
+    if (!impl->header || !impl->midiQueues) return false;
+
+    auto writeIdx = atomicAt(impl->header->inWriteIdx);
+    auto readIdx  = atomicAt(impl->header->inReadIdx);
+    uint64_t w = writeIdx.load(std::memory_order_relaxed);
+    uint64_t r = readIdx.load(std::memory_order_acquire);
+    if (w - r >= impl->header->maxBlocks)
+    {
+        atomicAt(impl->header->xruns).fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    const auto slot = w % impl->header->maxBlocks;
+    auto& queue = impl->midiQueues[slot];
+
+    // 1. Pack MIDI into the slot's queue. `count` is left at 0 until the
+    //    events[] entries are written, then published with release semantics.
+    atomicAt32(queue.count).store(0, std::memory_order_relaxed);
+    uint32_t written = 0;
+    auto bumpOverflow = [&queue]
+    {
+        // Atomic-ref so a sandbox-side reader sees a coherent counter.
+        atomicAt32(queue.overflow).fetch_add(1, std::memory_order_relaxed);
+    };
+    for (const auto meta : midi)
+    {
+        const auto& msg = meta.getMessage();
+        const int rawSize = msg.getRawDataSize();
+        if (rawSize <= 0 || rawSize > (int)kMidiEventMaxBytes)
+        {
+            // Doesn't fit (SysEx etc.). Audio thread never blocks; the
+            // lossy policy is documented in PR #2.
+            bumpOverflow();
+            continue;
+        }
+        if (written >= kMidiEventsPerSlot)
+        {
+            bumpOverflow();
+            continue;
+        }
+        auto& ev = queue.events[written];
+        // Clamp frame to [0, numSamples-1]: the sandbox passes ev.frame to
+        // juce::MidiBuffer::addEvent, and a frame past the block boundary
+        // would land in a future block (or trigger plugin-side asserts).
+        const int clampedFrame = juce::jlimit(0,
+                                              juce::jmax(0, numSamples - 1),
+                                              meta.samplePosition);
+        ev.frame = (uint32_t)clampedFrame;
+        ev.size  = (uint32_t)rawSize;
+        std::memcpy(ev.bytes, msg.getRawData(), (size_t)rawSize);
+        ++written;
+    }
+    atomicAt32(queue.count).store(written, std::memory_order_release);
+
+    // 2. Copy audio into the same slot of the input ring.
+    auto bytesPerSlot = impl->header->ringBytesPerSlot;
+    auto* dst = impl->inputRing + slot * (bytesPerSlot / sizeof(float));
+    const int maxCh      = (int)impl->header->maxChannels;
+    const int maxSamples = (int)impl->header->maxBlockSamples;
+    const int channels   = juce::jmin(maxCh, src.getNumChannels());
+    const int samples    = juce::jmin(maxSamples, numSamples);
+    for (int ch = 0; ch < channels; ++ch)
+    {
+        auto* slotCh = dst + ch * maxSamples;
+        std::memcpy(slotCh, src.getReadPointer(ch),
+                    sizeof(float) * (size_t)samples);
+        if (samples < maxSamples)
+            std::memset(slotCh + samples, 0,
+                        sizeof(float) * (size_t)(maxSamples - samples));
+    }
+    for (int ch = channels; ch < maxCh; ++ch)
+        std::memset(dst + ch * maxSamples, 0,
+                    sizeof(float) * (size_t)maxSamples);
+
+    // 3. Publish the slot — release-synchronises with the consumer's acquire
+    //    on inWriteIdx in popInputBlock, which makes both the audio bytes
+    //    and the MIDI queue visible together.
+    writeIdx.store(w + 1, std::memory_order_release);
+    SetEvent(impl->evtToSandbox);
+    return true;
+}
+
+bool AudioChannel::popInputBlock(juce::AudioBuffer<float>& dst,
+                                 juce::MidiBuffer& midi,
+                                 int numSamples, int timeoutMs)
+{
+    // Inlined audio + MIDI drain so we hold the slot until both are read.
+    // Earlier this method delegated to popBlock(false, ...), which advanced
+    // inReadIdx before the MIDI was drained — the host could then immediately
+    // reuse the slot and overwrite the queue we were still reading.
+    if (!impl->header || !impl->midiQueues) return false;
+
+    HANDLE evt = impl->evtToSandbox;
+    auto writeIdx = atomicAt(impl->header->inWriteIdx);
+    auto readIdx  = atomicAt(impl->header->inReadIdx);
+
+    // Same fast-path / wait / recheck pattern as popBlock: SetEvent on an
+    // auto-reset event collapses signals, so if pushInputBlock fires twice
+    // in a row we'd otherwise block on the second pop even though w > r.
+    uint64_t r = readIdx.load(std::memory_order_relaxed);
+    uint64_t w = writeIdx.load(std::memory_order_acquire);
+    if (w == r)
+    {
+        if (WaitForSingleObject(evt, timeoutMs) != WAIT_OBJECT_0)
+        {
+            atomicAt(impl->header->dropouts).fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        r = readIdx.load(std::memory_order_relaxed);
+        w = writeIdx.load(std::memory_order_acquire);
+        if (w == r)
+        {
+            // Spurious wake (teardown, pause-guard sandboxWake). Bump
+            // dropouts so the class is visible in counters.
+            atomicAt(impl->header->dropouts).fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+    }
+
+    const auto slot = r % impl->header->maxBlocks;
+
+    // 1. Drain MIDI from the slot. Acquire on `count` pairs with the host's
+    //    release on inWriteIdx, so the events[] payload is visible.
+    auto& queue = impl->midiQueues[slot];
+    const uint32_t count = atomicAt32(queue.count)
+                                .load(std::memory_order_acquire);
+    const uint32_t safeCount = juce::jmin(count, kMidiEventsPerSlot);
+    for (uint32_t i = 0; i < safeCount; ++i)
+    {
+        const auto& ev = queue.events[i];
+        const uint32_t size = juce::jmin(ev.size, kMidiEventMaxBytes);
+        if (size == 0) continue;
+        midi.addEvent(juce::MidiMessage(ev.bytes, (int)size),
+                      (int)ev.frame);
+    }
+
+    // 2. Copy audio out of the slot.
+    auto bytesPerSlot = impl->header->ringBytesPerSlot;
+    auto* src = impl->inputRing + slot * (bytesPerSlot / sizeof(float));
+    const int maxSamples = (int)impl->header->maxBlockSamples;
+    const int dstCh      = dst.getNumChannels();
+    const int channels   = juce::jmin((int)impl->header->maxChannels, dstCh);
+    const int samples    = juce::jmin(maxSamples, numSamples);
+    for (int ch = 0; ch < channels; ++ch)
+    {
+        std::memcpy(dst.getWritePointer(ch),
+                    src + ch * maxSamples,
+                    sizeof(float) * (size_t)samples);
+        if (samples < numSamples)
+            std::memset(dst.getWritePointer(ch) + samples, 0,
+                        sizeof(float) * (size_t)(numSamples - samples));
+    }
+    for (int ch = channels; ch < dstCh; ++ch)
+        dst.clear(ch, 0, numSamples);
+
+    // 3. Release the slot — the host can now reuse it; we've finished both
+    //    audio and MIDI reads.
+    readIdx.store(r + 1, std::memory_order_release);
+    return true;
+}
+
+void AudioChannel::signalSandboxWake()
+{
+    if (impl->evtToSandbox) SetEvent(impl->evtToSandbox);
 }
 
 } // namespace slopsmith::sandbox

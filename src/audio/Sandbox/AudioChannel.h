@@ -43,12 +43,41 @@ public:
 
     // Whichever side we are: copy a block of audio in (host: input → sandbox;
     // sandbox: processed output → host). Returns false if the ring is full.
+    //
+    // For the input direction, prefer pushInputBlock() / popInputBlock() so
+    // the per-slot MIDI queue is published / drained in the same critical
+    // section. Calling pushBlock(false, ...) directly resets the slot's
+    // MidiQueue to count=0 implicitly so a stale pushInputBlock payload
+    // doesn't get replayed against fresh audio.
     bool pushBlock(bool isOutputRing, const juce::AudioBuffer<float>& src,
                    int numSamples);
 
     // Mirror of pushBlock: drain one block out. Returns false on timeout.
     bool popBlock(bool isOutputRing, juce::AudioBuffer<float>& dst,
                   int numSamples, int timeoutMs);
+
+    // Host-side input push that bundles per-block MIDI into the upcoming
+    // slot's MidiQueue. Events past kMidiEventsPerSlot (or larger than
+    // kMidiEventMaxBytes, e.g. SysEx) bump the queue's overflow counter and
+    // are dropped. The audio thread never blocks; lossy MIDI is the
+    // documented v2 policy.
+    bool pushInputBlock(const juce::AudioBuffer<float>& src,
+                        const juce::MidiBuffer& midi,
+                        int numSamples);
+
+    // Sandbox-side input pop that drains the matching MidiQueue into `dst`.
+    // The MIDI queue is read before the read-index is advanced so the slot
+    // stays owned by the sandbox until both audio and MIDI are consumed.
+    bool popInputBlock(juce::AudioBuffer<float>& dst,
+                       juce::MidiBuffer& midi,
+                       int numSamples, int timeoutMs);
+
+    // Wake the sandbox audio thread out of its popInputBlock wait without
+    // pushing a real block. Used by the host-side audio-thread pause/drain
+    // protocol so non-realtime control ops don't have to wait the full
+    // popInputBlock timeout for the audio worker to notice the pause flag.
+    // Sandbox-side: also called on shutdown to break the loop's WaitFor.
+    void signalSandboxWake();
 
     const AudioDimensions& dims() const noexcept { return cachedDims; }
 

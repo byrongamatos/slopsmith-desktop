@@ -442,36 +442,20 @@ void SandboxedProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     }
     const int n = buffer.getNumSamples();
 
-    // Pass MIDI through unchanged for now. The sandbox can't receive
-    // MIDI in v1 (vst-host's op::kMidiEvent dispatcher is a no-op stub
-    // and the control-channel forwarding was pure allocator pressure
-    // on the audio thread), but clearing the buffer here would also
-    // swallow MIDI for any DOWNSTREAM processors in a SignalChain —
-    // e.g. a sandboxed effect would silently break a synth that
-    // follows it. Inline-per-block shm covered by the audio-shm
-    // follow-up will give us a path to deliver MIDI to the sandbox
-    // without taking it away from the chain.
-
-    if (!audio->pushBlock(/*isOutputRing=*/false, buffer, n))
+    // v2: MIDI rides inline in the input slot's MidiQueue. Zero control-pipe
+    // I/O on the audio thread (was the deferred Copilot finding from PR #63).
+    if (!audio->pushInputBlock(buffer, midiMessages, n))
     {
         // Input ring full — sandbox isn't keeping up. Don't wait the full
         // pop timeout (which would extend the dropout); zero output and
-        // exit. xruns was incremented inside pushBlock. WARNING: with the
-        // v1 shared writeIdx/readIdx pair (see SANDBOX-DESIGN §4 v2 split),
-        // skipping the corresponding pop leaves the two rings phase-shifted
-        // by one block. Recovery is NOT automatic — `readIdx` keeps
-        // advancing on each successful pop, so the input/output streams
-        // stay desynchronised by one block until the next dropped push
-        // happens to re-align them (or a teardown re-initialises both
-        // indices). v1 sandbox under steady back-pressure will therefore
-        // produce persistently stale-by-one-block output, not just "one
-        // block of stale output before recovering" as previously
-        // documented. The per-direction-indices refactor in PR #2 splits
-        // input/output indices and fixes the alignment cleanly.
+        // exit. xruns was incremented inside pushInputBlock.
         VST_TRACE("[sandbox] processBlock: input ring full, dropping (xruns++)");
+        midiMessages.clear();
         buffer.clear();
         return;
     }
+    midiMessages.clear();
+
     // Pop timeout = 4× the block period, floored at 2 ms so very high
     // sample rates / small blocks don't end up with sub-millisecond budgets.
     constexpr int kPopTimeoutBlockMultiplier = 4;

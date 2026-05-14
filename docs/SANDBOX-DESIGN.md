@@ -72,19 +72,20 @@ carry `requestId: null`.
 | `op` | Status | Payload | Reply |
 |---|---|---|---|
 | `prepare` | v1 | `{ sampleRate, blockSize }` | `{ ok, latencySamples, numInputs, numOutputs }` |
+| `setBlockSize` | v2 | `{ blockSize }` | `{ ok }` — pause-guarded against the audio worker |
 | `setParameter` | v1 | `{ index, value }` | `{ ok }` (omit reply if `fireAndForget: true`) |
-| `getState` | v1 | `{}` | `{ stateBase64 }` |
-| `setState` | v1 | `{ stateBase64 }` | `{ ok }` |
-| `midiEvent` | v1 | `{ frame, bytes: [..] }` | `{ ok }` (fire-and-forget by default) |
+| `getState` | v1 | `{}` | `{ stateBase64 }` — pause-guarded |
+| `setState` | v1 | `{ stateBase64 }` | `{ ok }` — pause-guarded |
+| `midiEvent` | removed v2 | (n/a) | MIDI now flows inline in the audio shm; sandbox keeps a deprecation-warning no-op handler for one release |
 | `openEditor` | v1 | `{}` | `{ hwnd: "0x...", w, h }` |
 | `closeEditor` | v1 | `{}` | `{ ok }` |
 | `shutdown` | v1 | `{}` | `{ ok }` then sandbox exits 0 |
-| `setBlockSize` | planned | `{ blockSize }` | `{ ok }` |
 | `resizeEditor` | planned | `{ w, h }` | `{ ok }` |
 | `listParameters` | planned | `{}` | `{ params: [{index,name,defaultValue,...}] }` |
 
 Status reflects the current dispatcher in `src/vst-host/main.cpp`. "Planned"
-ops are on the PR-body follow-up checklist.
+ops are on the PR-body follow-up checklist. Pause-guarded ops are listed in
+§4 "Audio-thread sync" below.
 
 ### Sandbox → main (events, `requestId: null`)
 
@@ -107,40 +108,71 @@ Audio is too latency-sensitive for JSON-on-pipes. One block at 48 k / 256 sample
 Layout in `audio-shm` (single mapping):
 
 ```text
-offset  size                                 contents
-0       sizeof(Header)                       Header (atomics, indices)
-H       maxBlocks × maxBlock × maxCh × 4 B   Ring A (host → sandbox, input audio)
-H+R     maxBlocks × maxBlock × maxCh × 4 B   Ring B (sandbox → host, output audio)
-H+2R    sizeof(MidiQueue)                    Inline MIDI events for upcoming block
+offset           size                                 contents
+0                sizeof(Header)                       Header (indices, offsets, counters)
+inputRingOffset  maxBlocks × maxBlockSamples × maxCh × 4 B   Ring A (host → sandbox, input audio)
+outputRingOffset maxBlocks × maxBlockSamples × maxCh × 4 B   Ring B (sandbox → host, output audio)
+midiQueueOffset  maxBlocks × sizeof(MidiQueue)        One MidiQueue per input slot (host → sandbox MIDI)
 ```
 
 ```c
 struct Header {
-    uint32_t version;
+    uint32_t magic;              // kAudioShmMagic
+    uint32_t version;            // kProtocolVersion (= 2)
     uint32_t maxBlocks;          // typically 4
     uint32_t maxBlockSamples;    // capped at e.g. 1024
     uint32_t maxChannels;        // 2 for stereo
     uint32_t sampleRate;
-    // Per-direction indices — needed so input (host→sandbox) and output
-    // (sandbox→host) producers/consumers don't share state.
-    std::atomic<uint64_t> inWriteIdx;   // host produces ring A
-    std::atomic<uint64_t> inReadIdx;    // sandbox consumes ring A
-    std::atomic<uint64_t> outWriteIdx;  // sandbox produces ring B
-    std::atomic<uint64_t> outReadIdx;   // host consumes ring B
-    // diagnostic
-    std::atomic<uint64_t> xruns;
-    std::atomic<uint64_t> dropouts;
+    // Per-direction indices — input (host→sandbox) and output (sandbox→host)
+    // each have their own writer/reader pair so the two directions advance
+    // independently without sharing state.
+    uint64_t inWriteIdx;   // host produces ring A
+    uint64_t inReadIdx;    // sandbox consumes ring A
+    uint64_t outWriteIdx;  // sandbox produces ring B
+    uint64_t outReadIdx;   // host consumes ring B
+    // diagnostic — direction-agnostic
+    uint64_t xruns;
+    uint64_t dropouts;
+    // Byte offsets into the mapping (computed at spawn time)
+    uint64_t inputRingOffset;
+    uint64_t outputRingOffset;
+    uint64_t midiQueueOffset;   // base of MidiQueue[maxBlocks]
+    uint64_t ringBytesPerSlot;
 };
 ```
 
-> **Impl status:** the v1 Windows code in `src/audio/Sandbox/AudioChannel.cpp`
-> currently uses a single `writeIdx/readIdx` pair shared across both rings. It
-> works for the strictly-serial `processBlock` round-trip (host writes input,
-> waits, sandbox writes output, host reads), but is *not* safe for concurrent
-> full-duplex use. Splitting into the per-direction pairs above is part of the
-> follow-up "MIDI through audio shm" PR alongside sample-accurate automation.
+Indices are stored as plain `uint64_t` and accessed via `std::atomic_ref<uint64_t>`
+at the call site (C++20). Don't `reinterpret_cast` to `std::atomic<uint64_t>*`
+— that's not layout-guaranteed and the shm needs to stay trivially copyable.
 
 Float32, planar (channel0 then channel1 — matches JUCE's `AudioBuffer<float>`).
+
+### Inline MIDI
+
+MIDI is bundled with the input audio block in a per-slot `MidiQueue`. The host
+fills the upcoming slot's queue immediately before pushing the audio block; the
+sandbox drains it immediately after popping the same slot, before calling
+`plugin->processBlock`. The audio thread does no control-pipe I/O.
+
+```c
+struct MidiEvent {
+    uint32_t frame;                       // sample offset within the block
+    uint32_t size;                        // 1..kMidiEventMaxBytes
+    uint8_t  bytes[kMidiEventMaxBytes];   // packed; SysEx > 4 B is dropped
+};
+struct MidiQueue {
+    uint32_t count;                       // valid events for the upcoming block
+    uint32_t overflow;                    // host-only diagnostic
+    MidiEvent events[kMidiEventsPerSlot]; // 64 events @ ≤ 4 bytes each
+};
+```
+
+Caps in `Protocol.h`: `kMidiEventMaxBytes = 4`, `kMidiEventsPerSlot = 64`.
+Lossy-by-design: events past the cap (or larger than 4 bytes) bump the queue's
+`overflow` counter and are dropped. Audio-thread safety is non-negotiable;
+back-pressure on a real-time path would be the wrong trade-off. SysEx delivery,
+if a real workload ever needs it, is a v3 op carried via the control channel
+rather than the audio fast path.
 
 ### Per-block protocol
 
@@ -167,6 +199,36 @@ Sandbox audio thread (or sandbox main thread's audio callback):
 Both events are auto-reset. Worst-case added latency vs in-process: one block period
 (~5 ms at 48k/256) due to the producer-consumer hop. Acceptable for guitar processing,
 not great for live monitoring — same trade-off any sandboxed host has.
+
+### Audio-thread sync for non-realtime ops
+
+Several control ops mutate plugin or buffer state in ways that race the audio
+thread's `processBlock` call: `kPrepare` and `kSetBlockSize` change the working
+block size and re-enter the plugin's `prepareToPlay`; `kGetState` /
+`kSetState` serialise/restore plugin internals. A v1-style "just touch it from
+the control thread" implementation is a data race + buffer-overrun footgun.
+
+v2 introduces a lightweight pause/drain/resume protocol on the sandbox side:
+
+- HostState owns `audioPauseRequested` (atomic bool), `audioPausedAck`, and
+  `audioResume` (`juce::WaitableEvent`s).
+- The audio thread checks `audioPauseRequested` at the top of every loop
+  iteration. When set, it signals `audioPausedAck` and blocks on `audioResume`.
+  On resume it re-reads `blockSize` and `setSize`s its working buffer
+  (capacity is pre-allocated at the spawn-time `maxBlockSamples` cap, so the
+  resize is reallocation-free).
+- The control thread wraps each non-realtime op in an `AudioPauseGuard`:
+  set the flag, `signalSandboxWake()` to break the audio worker out of its
+  `popInputBlock` wait without waiting the full 200 ms timeout, wait for the
+  ack, perform the op, then signal resume in the guard's destructor.
+
+Pause-guarded ops (sandbox dispatcher, `src/vst-host/main.cpp`):
+`kPrepare`, `kSetBlockSize`, `kGetState`, `kSetState`. `kOpenEditor` and
+`kCloseEditor` do not need the guard — they only mutate editor pointers via
+`MessageManager::callAsync` and don't touch processor state, and JUCE's
+`AudioProcessor::editorBeingDeleted` / VST3 `IPlugView::removed` are
+contractually safe to call alongside `processBlock` (the same way every DAW
+does).
 
 ## 5. Plugin selection (sandbox vs in-process)
 
