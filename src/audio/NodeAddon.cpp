@@ -839,6 +839,7 @@ static Napi::Value LoadVST(const Napi::CallbackInfo& info)
         // pluginName (used for diagnostic logging). Once the post-scan
         // path lands and we have a real PluginDescription with the
         // plugin's reported name, this synthetic value goes away.
+        probeDesc.name = juce::File(juce::String(pluginPath)).getFileNameWithoutExtension();
         if (slopsmith::sandbox::shouldSandbox(probeDesc))
         {
             sandboxRequired = true;
