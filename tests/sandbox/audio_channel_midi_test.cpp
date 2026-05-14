@@ -91,17 +91,14 @@ struct HeaderPeek
 
     explicit HeaderPeek(const juce::String& shmName)
     {
-        // FILE_MAP_ALL_ACCESS, not FILE_MAP_READ: readMidiOverflows
-        // constructs a std::atomic_ref<uint64_t> over the field, and
-        // atomic_ref requires the underlying memory to be writable
-        // (the implementation may use a CAS-based fallback for
-        // non-lock-free types — works in practice on x64 64-bit aligned
-        // because that's lock-free, but read-only mapping is technically
-        // UB). Match the host side's mapping flags.
-        mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE,
+        // FILE_MAP_READ is enough: std::atomic_ref<uint64_t> is always
+        // lock-free on x64 for naturally-aligned 8-byte fields, so the
+        // load() path here doesn't write through the mapping. Keep the
+        // mapping read-only to make the access intent explicit.
+        mapping = OpenFileMappingW(FILE_MAP_READ, FALSE,
                                    shmName.toWideCharPointer());
         if (!mapping) return;
-        view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0,
+        view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0,
                              sizeof(AudioShmHeader));
         if (view) hdr = reinterpret_cast<const AudioShmHeader*>(view);
     }
@@ -280,11 +277,22 @@ void testNumSamplesOverCapRejected()
     juce::MidiBuffer midi;
     midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)100), 50);
 
+    HeaderPeek peek{pair.names.shm};
+    REQUIRE(peek.hdr != nullptr);
+    const uint64_t dropoutsBefore = std::atomic_ref<uint64_t>(
+        const_cast<uint64_t&>(peek.hdr->dropouts))
+            .load(std::memory_order_relaxed);
+
     // Caller passes numSamples=256 but spawn cap is 128. Old behavior was
     // silently truncate audio + drop MIDI in [128, 256). New behavior:
     // return false up front, bump dropouts, so the misuse is visible to
     // the caller instead of silently lossy.
     CHECK(! pair.host.pushInputBlock(srcAudio, midi, 256));
+
+    const uint64_t dropoutsAfter = std::atomic_ref<uint64_t>(
+        const_cast<uint64_t&>(peek.hdr->dropouts))
+            .load(std::memory_order_relaxed);
+    CHECK(dropoutsAfter == dropoutsBefore + 1);
 }
 
 } // namespace

@@ -4,7 +4,23 @@
 # coverage for that code path.
 #
 # Standalone console exe; exits 0 on pass, 1 on fail.
+#
+# Dependency note: the JUCE targets (juce::juce_core, juce::juce_audio_basics)
+# come from `add_subdirectory(JUCE)` at the top of the project's
+# CMakeLists.txt, which runs BEFORE `add_subdirectory(tests)`. Guard against a
+# future re-ordering that hides them — better to fail-fast at configure time
+# than emit confusing link errors.
+if(NOT TARGET juce::juce_core OR NOT TARGET juce::juce_audio_basics)
+    message(FATAL_ERROR "audio_channel_midi_test: JUCE targets not in scope; "
+                        "tests/CMakeLists.txt must run after JUCE is added.")
+endif()
 
+# Note: AudioChannel.cpp + Protocol.cpp are compiled directly into the test
+# binary rather than linked from the addon's compiled library. This means any
+# function-local statics inside AudioChannel.cpp (e.g. the one-shot warn
+# flags in popBlock / popInputBlock) are SEPARATE copies from the production
+# binary — fine for this isolated test but means tests can't share or assert
+# against those one-shot warn states across the test/production boundary.
 add_executable(audio_channel_midi_test
     audio_channel_midi_test.cpp
     ../../src/audio/Sandbox/AudioChannel.cpp

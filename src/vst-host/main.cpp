@@ -309,12 +309,12 @@ struct AudioPauseGuard
         // window where running flips between our check and wait return),
         // bounded by the acquire-load semantic.
         // No upper bound on total wait — a heavy plugin's processBlock can
-        // legitimately run for tens of ms — but log if it's surprisingly
-        // long so a future "control op feels stuck" investigation has a
-        // breadcrumb.
+        // legitimately run for tens of ms — but log at escalating thresholds
+        // so a future "control op feels stuck" investigation has trail of
+        // breadcrumbs (not just the first 250 ms data point).
         const auto waitStart = std::chrono::steady_clock::now();
-        constexpr int kWarnThresholdMs = 250;
-        bool warned = false;
+        long long nextWarnMs = 250;        // 250ms → 1s → 5s → 30s → ...
+        bool everWarned = false;
         while (true)
         {
             if (!st.running.load(std::memory_order_acquire))
@@ -330,19 +330,31 @@ struct AudioPauseGuard
                 return;  // active=false → dtor is a no-op, callers skip mutation
             }
             if (st.audioPausedAck.wait(50)) break;
-            if (!warned)
+            using namespace std::chrono;
+            const long long elapsedMs = duration_cast<milliseconds>(
+                steady_clock::now() - waitStart).count();
+            while (elapsedMs >= nextWarnMs)
             {
-                using namespace std::chrono;
-                const auto elapsedMs = duration_cast<milliseconds>(
-                    steady_clock::now() - waitStart).count();
-                if (elapsedMs >= kWarnThresholdMs)
-                {
-                    hostLogf("AudioPauseGuard: ack still pending after %lld ms"
-                             " — heavy processBlock or stuck worker?",
-                             (long long)elapsedMs);
-                    warned = true;
-                }
+                hostLogf("AudioPauseGuard: ack still pending after %lld ms"
+                         " — heavy processBlock or stuck worker?", elapsedMs);
+                everWarned = true;
+                // Geometric backoff so a multi-second stall doesn't spam
+                // the log: 250ms, 1s, 5s, 30s, 5min, 30min, ...
+                if      (nextWarnMs < 1000)    nextWarnMs = 1000;
+                else if (nextWarnMs < 5000)    nextWarnMs = 5000;
+                else if (nextWarnMs < 30000)   nextWarnMs = 30000;
+                else                           nextWarnMs *= 10;
             }
+        }
+        if (everWarned)
+        {
+            // Final elapsed so the operator sees the actual stall length
+            // instead of just the last "after Nms" line.
+            using namespace std::chrono;
+            const long long totalMs = duration_cast<milliseconds>(
+                steady_clock::now() - waitStart).count();
+            hostLogf("AudioPauseGuard: ack received after %lld ms total",
+                     totalMs);
         }
         // Re-check running AFTER the ack succeeds. If `running` flipped to
         // false during the wait (worker exited, signaled audioPausedAck on
@@ -516,11 +528,17 @@ void runAudioThread(HostState& st)
         // JUCE contract: processBlock must not be called before prepareToPlay.
         // The worker now starts BEFORE control.start (so pause-guarded ops
         // always have an acker), so the spawn-to-first-kPrepare window is
-        // real. If a host pushes audio before kPrepare returns, drop the
-        // input block silently; xruns / dropouts already cover the
-        // diagnostic side. acquire-load pairs with kPrepare's release-store.
+        // real. If a host pushes audio before kPrepare returns, push a
+        // zero-output block (so the output ring stays in lockstep with the
+        // input ring; otherwise the host's popBlock(true,…) times out and
+        // bumps `dropouts` for every pre-prepare block, polluting the
+        // metric). acquire-load pairs with kPrepare's release-store.
         if (!st.prepared.load(std::memory_order_acquire))
+        {
+            buffer.clear();
+            st.audio.pushBlock(/*isOutputRing=*/true, buffer, currentBlockSize);
             continue;
+        }
         if (auto* p = st.plugin.get())
             p->processBlock(buffer, midi);
         st.audio.pushBlock(/*isOutputRing=*/true, buffer, currentBlockSize);
