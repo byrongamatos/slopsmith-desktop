@@ -68,7 +68,7 @@ public:
                         const juce::MidiBuffer& midi,
                         int numSamples);
 
-    // Sandbox-side input pop that drains the matching MidiQueue into `dst`.
+    // Sandbox-side input pop that drains the matching MidiQueue into `midi`.
     // The MIDI queue is read before the read-index is advanced so the slot
     // stays owned by the sandbox until both audio and MIDI are consumed.
     bool popInputBlock(juce::AudioBuffer<float>& dst,
