@@ -212,6 +212,24 @@ bool SandboxedProcessor::initialise(juce::String& errorOut)
             if (readyState->readySet.compare_exchange_strong(expected, true,
                                                              std::memory_order_acq_rel))
             {
+                // Validate the sandbox-advertised protocol version against
+                // the host build. The per-frame `v` check in
+                // ControlChannel::ioLoop catches mismatched messages too,
+                // but doing it here makes the failure a clean handshake
+                // error instead of "first message in/out the channel
+                // suddenly tears down". 0 means the sandbox didn't emit
+                // the field (pre-protocolVersion-in-ready build); treat
+                // as legacy = current protocol so old test stubs still
+                // work.
+                const int wireVer = (int)data.getProperty("protocolVersion", 0);
+                if (wireVer != 0 && wireVer != (int)kProtocolVersion)
+                {
+                    VST_TRACE("[sandbox] protocol version mismatch at handshake: "
+                              "host=%d sandbox=%d",
+                              (int)kProtocolVersion, wireVer);
+                    try { readyState->readyP.set_value(false); } catch (...) {}
+                    return;
+                }
                 descriptionCached.name = data.getProperty("pluginName", "").toString();
                 descriptionCached.manufacturerName =
                     data.getProperty("manufacturer", "").toString();

@@ -75,7 +75,13 @@ inline std::FILE* logFile()
         // equivalent path) returns NULL, which the rest of the code handles
         // cleanly.
 #else
-        std::snprintf(path, sizeof(path), "/tmp/slopsmith-vst-trace.log");
+        // Per-PID suffix mirrors the Windows branch: same rationale (header
+        // compiled into addon + sandbox host → concurrent runs interleave
+        // the same file) plus /tmp is world-writable on POSIX, which makes
+        // a stable filename a symlink-attack / log-poisoning vector. The
+        // per-PID name closes both.
+        std::snprintf(path, sizeof(path), "/tmp/slopsmith-vst-trace-%ld.log",
+                      (long)getpid());
 #endif
         std::FILE* fp = path[0] ? std::fopen(path, "a") : nullptr;
         if (fp) {

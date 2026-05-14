@@ -140,7 +140,26 @@ void ControlChannel::stop()
     if (ioThread.joinable())
     {
         if (std::this_thread::get_id() == ioThread.get_id())
+        {
+            // Self-stop: the I/O thread is unwinding through ioLoop /
+            // failWith / disconnect-callback / our caller into here.
+            // Detaching is the only choice (self-join deadlocks), but
+            // closing impl->pipe / impl->stopEvent below races the
+            // detached thread's last few instructions inside failWith /
+            // its caller stack. Two things make it safe today:
+            //   1. failWith captures everything it needs by value /
+            //      shared_ptr and does NOT re-touch impl->pipe after
+            //      setting `alive = false`.
+            //   2. CancelIoEx + SetEvent above already shoved the I/O
+            //      thread past any blocking syscall on the handles, so
+            //      the window between detach and CloseHandle is just
+            //      stack unwinding — no pipe-handle dereference.
+            // If a future refactor moves pipe access into the unwind
+            // path (e.g. a flush-on-stop in failWith), revisit: a
+            // shared_ptr-guarded impl + resourcesReleased latch is the
+            // standard fix.
             ioThread.detach();
+        }
         else
             ioThread.join();
     }

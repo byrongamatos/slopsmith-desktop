@@ -65,6 +65,14 @@ bool SubprocessHandle::start(const juce::String& exePath,
               (unsigned long)impl->pi.dwProcessId);
     running.store(true, std::memory_order_release);
     cachedPid = (uint32_t)impl->pi.dwProcessId;
+    // `onExitCb` is single-writer: only this start() path assigns to it,
+    // and the watcher thread (the only reader) is spawned a few lines
+    // below, after the assignment. The early-return guard at the top of
+    // this function rejects re-starts while a previous run is still
+    // alive, which keeps that invariant intact. If a future refactor
+    // ever permits an in-flight re-start, this assignment vs. the
+    // watcher's read becomes a data race — make onExitCb atomic or
+    // serialise via a mutex at that point.
     onExitCb = std::move(onExit);
 
     HANDLE procHandle = impl->pi.hProcess;

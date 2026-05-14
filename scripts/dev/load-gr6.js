@@ -64,8 +64,16 @@ setTimeout(() => {
             'C:\\Program Files\\Common Files\\VST3\\Guitar Rig 6.vst3',
             'C:\\Program Files\\Common Files\\VST3\\Guitar Rig 6 FX.vst3',
           ];
-    const gr6 = candidates.find(p => { try { return fs.existsSync(p); } catch (_) { return false; } })
-              || candidates[0];
+    const gr6 = candidates.find(p => { try { return fs.existsSync(p); } catch (_) { return false; } });
+    if (!gr6) {
+        console.error('[test] FATAL: no Guitar Rig 6 install found at any of:');
+        for (const p of candidates) console.error('  - ' + p);
+        console.error('Set GR6_PATH to override (e.g. GR6_PATH="C:\\path\\to\\Guitar Rig 6.vst3" node scripts\\dev\\load-gr6.js).');
+        try { addon.shutdown(); } catch (_) {}
+        clearTimeout(watchdog);
+        process.exit(2);
+        return;
+    }
     console.log('[test] calling addon.loadVST(' + gr6 + ')');
     let slot;
     try {

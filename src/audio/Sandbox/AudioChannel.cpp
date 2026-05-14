@@ -73,6 +73,15 @@ bool AudioChannel::createHostSide(const AudioDimensions& dims, Names& namesOut,
     impl->header->outputRingOffset = impl->header->inputRingOffset
                                    + uint64_t(dims.maxBlocks) * dims.bytesPerSlot();
 
+    // Release fence so all the header writes above are visible before the
+    // sandbox observes the mapping. CreateProcessW (the publish point on
+    // the host side) is a strong synchronisation primitive on Windows, so
+    // in practice the writes are already flushed before the child starts —
+    // but the fence makes the spawn-order invariant documented in
+    // openSandboxSide explicit at the producer rather than relying on the
+    // implicit semantics of the spawn call.
+    std::atomic_thread_fence(std::memory_order_release);
+
     auto* base = reinterpret_cast<char*>(impl->view);
     impl->inputRing  = reinterpret_cast<float*>(base + impl->header->inputRingOffset);
     impl->outputRing = reinterpret_cast<float*>(base + impl->header->outputRingOffset);
