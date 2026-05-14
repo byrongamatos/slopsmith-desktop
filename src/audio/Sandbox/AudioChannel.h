@@ -44,11 +44,14 @@ public:
     // Whichever side we are: copy a block of audio in (host: input → sandbox;
     // sandbox: processed output → host). Returns false if the ring is full.
     //
-    // For the input direction, prefer pushInputBlock() / popInputBlock() so
-    // the per-slot MIDI queue is published / drained in the same critical
-    // section. Calling pushBlock(false, ...) directly resets the slot's
-    // MidiQueue to count=0 implicitly so a stale pushInputBlock payload
-    // doesn't get replayed against fresh audio.
+    // For the INPUT direction, callers MUST use pushInputBlock() — pushBlock
+    // does not touch the slot's MidiQueue, so a direct pushBlock(false, ...)
+    // would leave whatever MIDI count was in the slot from a prior
+    // pushInputBlock and the next popInputBlock would replay those stale
+    // events against fresh audio. Today the only input producer is
+    // SandboxedProcessor::processBlock and it always goes through
+    // pushInputBlock; this overload exists for the OUTPUT direction
+    // (sandbox → host audio, no MIDI carried back).
     bool pushBlock(bool isOutputRing, const juce::AudioBuffer<float>& src,
                    int numSamples);
 

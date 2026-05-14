@@ -393,8 +393,19 @@ void runAudioThread(HostState& st)
     // Allocate at the spawn-time cap so the working buffer's storage is sized
     // for the largest blockSize the protocol allows. setSize(.., avoidRealloc)
     // on resume retargets to the current per-call size without a malloc.
+    //
+    // The realloc-free guarantee on resume relies on currentBlockSize <=
+    // bufferCap so subsequent setSize(..) calls (kPrepare / kSetBlockSize
+    // widening blockSize up to spawnCap) stay within the initial allocation.
+    // This invariant holds because spawn-time blockSize is clamped to
+    // kAudioMaxBlockSamples in SandboxFactory_win::tryLoadSandboxed and
+    // bufferCap == st.audio.dims().maxBlockSamples == that same cap. The
+    // jmax() below is a belt-and-braces guard for the case where some future
+    // spawn path lets the initial blockSize exceed bufferCap; the jassert
+    // makes the invariant explicit.
     const int bufferCap   = (int)st.audio.dims().maxBlockSamples;
     int currentBlockSize  = st.blockSize.load(std::memory_order_acquire);
+    jassert(currentBlockSize <= bufferCap);
     juce::AudioBuffer<float> buffer(st.channels, juce::jmax(bufferCap,
                                                             currentBlockSize));
     buffer.setSize(st.channels, currentBlockSize,

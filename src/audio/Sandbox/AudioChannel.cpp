@@ -405,18 +405,18 @@ bool AudioChannel::popBlock(bool isOutputRing, juce::AudioBuffer<float>& dst,
             atomicAt(impl->header->dropouts).fetch_add(1, std::memory_order_relaxed);
             return false;
         }
-        // Re-read; the wake might have been from teardown or another
-        // spurious source.
+        // Re-read; the wake might have been from teardown, an
+        // AudioPauseGuard's signalSandboxWake (every kPrepare /
+        // kSetBlockSize / kGetState / kSetState), or a kShutdown /
+        // disconnect callback. NONE of those are dropouts — they're
+        // intentional non-data wakes. Don't bump `dropouts` here or the
+        // counter pollutes every pause-guarded control op. Real
+        // dropouts are still counted on the WaitForSingleObject
+        // timeout path above and at the SandboxedProcessor pop-timeout
+        // call site.
         r = readIdx.load(std::memory_order_relaxed);
         w = writeIdx.load(std::memory_order_acquire);
-        if (w == r)
-        {
-            // Bump dropouts so the spurious-wake class is visible in the
-            // counters; otherwise it looks like a clean pop in operator
-            // logs but the caller still sees a failed return.
-            atomicAt(impl->header->dropouts).fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
+        if (w == r) return false;
     }
 
     auto slot = r % impl->header->maxBlocks;
@@ -565,13 +565,12 @@ bool AudioChannel::popInputBlock(juce::AudioBuffer<float>& dst,
         }
         r = readIdx.load(std::memory_order_relaxed);
         w = writeIdx.load(std::memory_order_acquire);
-        if (w == r)
-        {
-            // Spurious wake (teardown, pause-guard sandboxWake). Bump
-            // dropouts so the class is visible in counters.
-            atomicAt(impl->header->dropouts).fetch_add(1, std::memory_order_relaxed);
-            return false;
-        }
+        // Intentional non-data wake (AudioPauseGuard signalSandboxWake on
+        // every pause-guarded control op, kShutdown, disconnect). Same
+        // rationale as popBlock: don't count these as dropouts. Real
+        // missed-deadline events are caught by the timeout branch above
+        // and by SandboxedProcessor's pop-timeout call site.
+        if (w == r) return false;
     }
 
     const auto slot = r % impl->header->maxBlocks;
