@@ -165,10 +165,14 @@ bool parseArgs(int argc, wchar_t** argv, Args& out, juce::String& whyFailed)
                   + " (min=8000)";
         return false;
     }
-    if (out.maxBlock < 16 || out.maxBlock > (int)kAudioMaxBlockSamples)
+    // Floor matches SandboxFactory_win::tryLoadSandboxed's jlimit(64, ...)
+    // on the host side. Keeping the two in sync prevents an external caller
+    // from spawning the binary with a smaller block size than the spawn
+    // factory would clamp.
+    if (out.maxBlock < 64 || out.maxBlock > (int)kAudioMaxBlockSamples)
     {
         whyFailed = "invalid --max-block=" + juce::String(out.maxBlock)
-                  + " (min=16 cap=" + juce::String((int)kAudioMaxBlockSamples) + ")";
+                  + " (min=64 cap=" + juce::String((int)kAudioMaxBlockSamples) + ")";
         return false;
     }
     if (out.channels > (int)kAudioMaxChannels)

@@ -83,7 +83,13 @@ inline std::FILE* logFile()
         std::snprintf(path, sizeof(path), "/tmp/slopsmith-vst-trace-%ld.log",
                       (long)getpid());
 #endif
-        std::FILE* fp = path[0] ? std::fopen(path, "a") : nullptr;
+        // Truncate ("w") rather than append ("a"): per-PID naming guarantees
+        // single-writer-per-file, but Windows reuses PIDs across reboots
+        // (and Linux can too under PID-namespace cycling), so an old trace
+        // from a previous run on the same PID would otherwise accumulate
+        // confusing context. Matches the sandbox-host log policy in
+        // src/vst-host/main.cpp.
+        std::FILE* fp = path[0] ? std::fopen(path, "w") : nullptr;
         if (fp) {
             std::fprintf(fp, "\n========== slopsmith-vst-trace opened (pid=%lu) ==========\n",
                          (unsigned long)

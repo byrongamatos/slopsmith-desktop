@@ -35,12 +35,50 @@ bool SubprocessHandle::start(const juce::String& exePath,
         return false;
     }
 
-    // Build a properly-quoted command line: each arg quoted; the exe path also
-    // quoted so spaces in install paths work.
+    // Win32 CommandLineToArgvW quoting rules per Microsoft docs:
+    //   - 2N backslashes followed by `"` → N backslashes + end of quoted region
+    //   - 2N+1 backslashes followed by `"` → N backslashes + literal `"`
+    //   - backslashes NOT followed by `"` are kept literal
+    // So embedded `"` needs all preceding backslashes doubled AND the `"`
+    // backslash-escaped, and a trailing backslash inside a quoted arg also
+    // needs to be doubled (otherwise it escapes the closing quote).
+    auto quoteWin32 = [](const juce::String& in) -> juce::String
+    {
+        juce::String out;
+        out << '"';
+        int backslashes = 0;
+        for (juce::juce_wchar c : in)
+        {
+            if (c == '\\')
+            {
+                ++backslashes;
+            }
+            else if (c == '"')
+            {
+                // Double all the pending backslashes, then escape the quote.
+                out += juce::String::repeatedString("\\\\", backslashes);
+                out += "\\\"";
+                backslashes = 0;
+            }
+            else
+            {
+                // Pending backslashes are literal (not followed by a quote).
+                out += juce::String::repeatedString("\\", backslashes);
+                backslashes = 0;
+                out += juce::String::charToString(c);
+            }
+        }
+        // Trailing backslashes inside a quoted arg get doubled, otherwise
+        // the closing quote turns into an escaped literal `"`.
+        out += juce::String::repeatedString("\\\\", backslashes);
+        out << '"';
+        return out;
+    };
+
     juce::String cmd;
-    cmd << "\"" << exePath << "\"";
+    cmd << quoteWin32(exePath);
     for (auto& a : args)
-        cmd << " \"" << a.replace("\"", "\\\"") << "\"";
+        cmd << ' ' << quoteWin32(a);
 
     STARTUPINFOW si{};
     si.cb = sizeof(si);
