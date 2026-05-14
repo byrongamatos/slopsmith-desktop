@@ -594,7 +594,16 @@ void SandboxedProcessor::getStateInformation(juce::MemoryBlock& destData)
     }
     auto b64 = reply.getProperty("stateBase64", "").toString();
     juce::MemoryOutputStream mo(destData, false);
-    juce::Base64::convertFromBase64(mo, b64);
+    if (! juce::Base64::convertFromBase64(mo, b64))
+    {
+        // Malformed base64 in the wire payload — leave destData empty
+        // (mo writes nothing on failure) so the host sees a "no state"
+        // outcome rather than a partial blob. Surface the failure so
+        // IPC corruption is diagnosable instead of silently masquerading
+        // as a plugin with no state.
+        VST_TRACE("[sandbox] getStateInformation: invalid base64 in reply "
+                  "(len=%d)", (int)b64.length());
+    }
 }
 
 void SandboxedProcessor::setStateInformation(const void* data, int sizeInBytes)
