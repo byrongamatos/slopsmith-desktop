@@ -488,6 +488,17 @@ bool AudioChannel::pushInputBlock(const juce::AudioBuffer<float>& src,
     // pushBlock used to clobber `count` to 0 between our MIDI publish and
     // the inWriteIdx bump — every MIDI event was being dropped.
     if (!impl->header || !impl->midiQueues) return false;
+    // Reject up front when the caller exceeds the spawn-time cap rather
+    // than silently truncating audio + dropping MIDI in [maxSamples,
+    // numSamples) into midiOverflows. Spawn-cap validation in kPrepare /
+    // kSetBlockSize should prevent this; if it ever fires the caller
+    // gets a `false` return (xruns is the wrong counter — bump dropouts
+    // so this misuse is visible without conflating with ring-full).
+    if (numSamples > (int)impl->header->maxBlockSamples)
+    {
+        atomicAt(impl->header->dropouts).fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
 
     auto writeIdx = atomicAt(impl->header->inWriteIdx);
     auto readIdx  = atomicAt(impl->header->inReadIdx);

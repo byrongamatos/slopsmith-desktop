@@ -91,10 +91,17 @@ struct HeaderPeek
 
     explicit HeaderPeek(const juce::String& shmName)
     {
-        mapping = OpenFileMappingW(FILE_MAP_READ, FALSE,
+        // FILE_MAP_ALL_ACCESS, not FILE_MAP_READ: readMidiOverflows
+        // constructs a std::atomic_ref<uint64_t> over the field, and
+        // atomic_ref requires the underlying memory to be writable
+        // (the implementation may use a CAS-based fallback for
+        // non-lock-free types — works in practice on x64 64-bit aligned
+        // because that's lock-free, but read-only mapping is technically
+        // UB). Match the host side's mapping flags.
+        mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE,
                                    shmName.toWideCharPointer());
         if (!mapping) return;
-        view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0,
+        view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0,
                              sizeof(AudioShmHeader));
         if (view) hdr = reinterpret_cast<const AudioShmHeader*>(view);
     }
@@ -223,18 +230,18 @@ void testOverCapBumpsOverflow()
 
 void testFramePastSamplesDropped()
 {
-    std::printf("test: events past truncated samples drop + bump overflows\n");
+    std::printf("test: events past block samples drop + bump overflows\n");
     AudioDimensions dims;
-    dims.maxBlockSamples = 128;       // tighter cap to make the truncation real
+    dims.maxBlockSamples = 128;
     ChannelPair pair{dims};
     REQUIRE(pair.ok);
 
-    juce::AudioBuffer<float> srcAudio((int)dims.maxChannels, 256);
+    juce::AudioBuffer<float> srcAudio((int)dims.maxChannels, 128);
     srcAudio.clear();
     juce::MidiBuffer midi;
-    // Caller passes numSamples=256 but spawn cap is 128 — pushInputBlock
-    // truncates audio to samples=128 and should DROP MIDI events at
-    // frames >= 128 rather than clamping them into the audible portion.
+    // Caller passes numSamples=128 (within cap). Events at frames >= 128
+    // should DROP rather than clamp into the audible portion (which would
+    // silently re-time them, the worse failure mode).
     midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)100), 50);   // in-range
     midi.addEvent(juce::MidiMessage::noteOn(1, 61, (juce::uint8)100), 127);  // last in-range frame
     midi.addEvent(juce::MidiMessage::noteOn(1, 62, (juce::uint8)100), 128);  // out-of-range (= samples)
@@ -244,11 +251,11 @@ void testFramePastSamplesDropped()
     REQUIRE(peek.hdr != nullptr);
     const uint64_t overflowsBefore = readMidiOverflows(peek.hdr);
 
-    CHECK(pair.host.pushInputBlock(srcAudio, midi, 256));
+    CHECK(pair.host.pushInputBlock(srcAudio, midi, 128));
 
-    juce::AudioBuffer<float> dstAudio((int)dims.maxChannels, 256);
+    juce::AudioBuffer<float> dstAudio((int)dims.maxChannels, 128);
     juce::MidiBuffer drained;
-    CHECK(pair.sandbox.popInputBlock(dstAudio, drained, 256, 1000));
+    CHECK(pair.sandbox.popInputBlock(dstAudio, drained, 128, 1000));
 
     int n = 0;
     int lastFrame = -1;
@@ -260,6 +267,26 @@ void testFramePastSamplesDropped()
     CHECK(overflowsAfter == overflowsBefore + 2);
 }
 
+void testNumSamplesOverCapRejected()
+{
+    std::printf("test: numSamples > maxSamples rejected up front\n");
+    AudioDimensions dims;
+    dims.maxBlockSamples = 128;
+    ChannelPair pair{dims};
+    REQUIRE(pair.ok);
+
+    juce::AudioBuffer<float> srcAudio((int)dims.maxChannels, 256);
+    srcAudio.clear();
+    juce::MidiBuffer midi;
+    midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8)100), 50);
+
+    // Caller passes numSamples=256 but spawn cap is 128. Old behavior was
+    // silently truncate audio + drop MIDI in [128, 256). New behavior:
+    // return false up front, bump dropouts, so the misuse is visible to
+    // the caller instead of silently lossy.
+    CHECK(! pair.host.pushInputBlock(srcAudio, midi, 256));
+}
+
 } // namespace
 
 int main()
@@ -269,6 +296,7 @@ int main()
     testSysExBumpsOverflow();
     testOverCapBumpsOverflow();
     testFramePastSamplesDropped();
+    testNumSamplesOverCapRejected();
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

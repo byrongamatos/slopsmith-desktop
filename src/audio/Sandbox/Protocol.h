@@ -29,16 +29,16 @@ namespace slopsmith::sandbox {
 //     in*/out* pairs so input and output rings no longer share state.
 //   * MIDI is bundled into the audio shm per input slot (MidiQueue) instead
 //     of riding the control pipe per event; op::kMidiEvent is removed (the
-//     sandbox keeps a deprecation-warning no-op handler for one release).
+//     sandbox keeps a warn-and-drop handler as a paranoid v1 fallback).
 //   * setBlockSize is no longer "planned" — it's a real op gated by the
 //     audio-thread pause/drain/resume protocol described in vst-host/main.cpp.
 //
-// v3 (this PR, post-review):
-//   * SHM ABI cleanup — the per-slot MidiQueue.overflow field was promoted to
-//     a single AudioShmHeader.midiOverflows counter (per-slot was confusing
-//     under round-robin slot reuse). Bumped because mixed v2/v3 binaries
-//     would interpret different offsets for the MIDI queue and the trailing
-//     header counters and silently corrupt ring data.
+// v3 (this PR, mid-review): SHM ABI cleanup — overflow accounting moved from
+//   a per-slot field on MidiQueue to a single AudioShmHeader.midiOverflows
+//   counter (per-slot was confusing under round-robin slot reuse). Bumped
+//   because mixed v2/v3 binaries would interpret different offsets for the
+//   MIDI queue + trailing header counters and silently corrupt ring data.
+//   v2 was never released externally; this is the first version that ships.
 inline constexpr uint32_t kProtocolVersion = 3;
 
 // Magic number stamped at the head of the audio shared memory so a stale

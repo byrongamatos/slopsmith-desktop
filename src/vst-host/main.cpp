@@ -302,14 +302,20 @@ struct AudioPauseGuard
         // the worker exits between our `running` check and this wait (or if
         // a back-to-back pause guard already consumed the worker's
         // exit-time signal), we still notice and bail without deadlocking.
-        // No upper bound on the wait — a heavy plugin's processBlock can
+        // The `running` check happens BEFORE each wait, not after — that
+        // way a back-to-back guard at shutdown observes running=false and
+        // bails on the first iteration instead of paying the 50ms wait
+        // before noticing. Worst-case latency is one 50ms slice (the
+        // window where running flips between our check and wait return),
+        // bounded by the acquire-load semantic.
+        // No upper bound on total wait — a heavy plugin's processBlock can
         // legitimately run for tens of ms — but log if it's surprisingly
         // long so a future "control op feels stuck" investigation has a
         // breadcrumb.
         const auto waitStart = std::chrono::steady_clock::now();
         constexpr int kWarnThresholdMs = 250;
         bool warned = false;
-        while (!st.audioPausedAck.wait(50))
+        while (true)
         {
             if (!st.running.load(std::memory_order_acquire))
             {
@@ -323,6 +329,7 @@ struct AudioPauseGuard
                 st.audioResume.signal();
                 return;  // active=false → dtor is a no-op, callers skip mutation
             }
+            if (st.audioPausedAck.wait(50)) break;
             if (!warned)
             {
                 using namespace std::chrono;
@@ -592,6 +599,13 @@ void dispatchRequest(HostState& st, int requestId, const juce::String& op,
         st.sampleRate.store((int)sr, std::memory_order_release);
         st.blockSize.store(bs,       std::memory_order_release);
         st.plugin->setNonRealtime(false);
+        // Caller contract: JUCE plugins must not throw from prepareToPlay
+        // (the AudioProcessor base spec is noexcept-by-convention; a
+        // throwing plugin is a bug). If a future plugin ever does throw,
+        // this would propagate up the dispatch stack and `prepared` would
+        // remain false, so the worker stays gated and no half-configured
+        // processBlock fires. Acceptable failure mode; document but don't
+        // wrap in try/catch (which would mask the bug).
         st.plugin->prepareToPlay(sr, bs);
         // Order matters: publish `prepared=true` AFTER prepareToPlay returns
         // so the audio worker (which gates on `prepared`) never sees the
