@@ -17,6 +17,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <atomic>
+#include <charconv>
 #include <cmath>
 #include <limits>
 #include <cstdarg>
@@ -64,6 +65,23 @@ struct Args
 // for our own call path; an external caller passing `--sample-rate=48000`
 // gets a clear "unknown flag '--sample-rate=48000'" rather than silent
 // misparsing.
+// Strict positive-integer parse for numeric CLI flags. juce::String
+// ::getIntValue() parses a numeric prefix and ignores trailing garbage
+// ("512foo" → 512, "48k" → 48), which lets a malformed spawn silently
+// mutate runtime audio settings. from_chars + ptr==end requires the
+// whole string be a clean integer.
+inline bool parseStrictPositiveInt(const juce::String& text, int& dst)
+{
+    const char* begin = text.toRawUTF8();
+    const char* end   = begin + std::strlen(begin);
+    if (begin == end) return false;
+    int value = 0;
+    auto [ptr, ec] = std::from_chars(begin, end, value);
+    if (ec != std::errc{} || ptr != end || value <= 0) return false;
+    dst = value;
+    return true;
+}
+
 bool parseArgs(int argc, wchar_t** argv, Args& out, juce::String& whyFailed)
 {
     // Track which flags have been set so a duplicate (e.g. from a future
@@ -107,9 +125,21 @@ bool parseArgs(int argc, wchar_t** argv, Args& out, juce::String& whyFailed)
         else if (key == "--audio-shm")       out.audio.shm = val;
         else if (key == "--audio-event-out") out.audio.evtToHost = val;
         else if (key == "--audio-event-in")  out.audio.evtToSandbox = val;
-        else if (key == "--sample-rate")     out.sampleRate = val.getIntValue();
-        else if (key == "--max-block")       out.maxBlock = val.getIntValue();
-        else if (key == "--channels")        out.channels = val.getIntValue();
+        else if (key == "--sample-rate")
+        {
+            if (!parseStrictPositiveInt(val, out.sampleRate))
+            { whyFailed = "invalid --sample-rate='" + val + "'"; return false; }
+        }
+        else if (key == "--max-block")
+        {
+            if (!parseStrictPositiveInt(val, out.maxBlock))
+            { whyFailed = "invalid --max-block='" + val + "'"; return false; }
+        }
+        else if (key == "--channels")
+        {
+            if (!parseStrictPositiveInt(val, out.channels))
+            { whyFailed = "invalid --channels='" + val + "'"; return false; }
+        }
         else
         {
             whyFailed = "unknown flag '" + key + "'";
@@ -243,8 +273,22 @@ inline void teardownGuiOnMessageThread(HostState& st, bool postQuit)
         if (postQuit) PostQuitMessage(0);
     }))
     {
-        st.editorWindow.reset();
-        st.editor.reset();
+        // callAsync false does NOT guarantee the message thread has shut
+        // down — JUCE returns false for several reasons (MessageManager
+        // null, quitMessagePosted set, or postMessageToSystemQueue itself
+        // failed for a transient reason). Destroying the editor/window
+        // here would race the still-pumping message thread in the
+        // transient-failure case (AsyncUpdater / MessageManagerLock would
+        // be dispatching into freed objects).
+        //
+        // Safer: flip `running` so the dispatch loop exits at its next
+        // tick, then let WinMain's post-loop cleanup destroy editor +
+        // window. That path runs AFTER runDispatchLoopUntil returns, at
+        // which point the message thread is no longer pumping and any
+        // pending AsyncUpdater work has nowhere to dispatch to. Net
+        // result: the destruction-while-loop-alive concern the
+        // callAsync was added to avoid is preserved, AND the off-
+        // thread-destruction concern is avoided too.
         st.running.store(false, std::memory_order_release);
     }
 }
