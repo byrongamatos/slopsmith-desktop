@@ -466,6 +466,14 @@ void SandboxedProcessor::processBlock(juce::AudioBuffer<float>& buffer,
     // Pop timeout = 4× the block period, floored at 2 ms so very high
     // sample rates / small blocks don't end up with sub-millisecond budgets.
     constexpr int kPopTimeoutBlockMultiplier = 4;
+    // Upstream invariant: SandboxFactory_win::tryLoadSandboxed caps
+    // sampleRate at uint32_t::max via `(uint32_t)std::lround(sr)`, so
+    // the `(int)spawnConfig.audio.sampleRate` cast below cannot wrap
+    // negative today. If that cap ever loosens, this divisor could
+    // become a wrapped-negative int and `jmax(1, negative)` would
+    // yield 1 → enormous timeout. The jmax(1, ...) is the in-place
+    // guard; keep it even though the upstream cap currently makes
+    // it unreachable.
     const int popTimeoutMs = (int)juce::jmax(2.0,
         1000.0 * n / juce::jmax(1, (int)spawnConfig.audio.sampleRate)
             * kPopTimeoutBlockMultiplier);

@@ -870,6 +870,12 @@ static Napi::Value LoadVST(const Napi::CallbackInfo& info)
         // return; if a caller doesn't catch, the exception propagates
         // uncaught). The Napi::Number::New is kept only to satisfy the
         // function signature.
+        // Invariant: this `return` MUST happen before any
+        // engine->getSignalChain() mutation. The throw above marks the
+        // napi call as having thrown; if a future edit adds work between
+        // the sandbox decision and this return, that work could partially
+        // mutate the signal chain while JS sees an exception — leaving
+        // a dangling slot that no one will clean up.
         Napi::Error::New(env, error.toStdString())
             .ThrowAsJavaScriptException();
         return Napi::Number::New(env, -1);

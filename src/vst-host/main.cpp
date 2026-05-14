@@ -175,10 +175,16 @@ bool parseArgs(int argc, wchar_t** argv, Args& out, juce::String& whyFailed)
                   + " (min=64 cap=" + juce::String((int)kAudioMaxBlockSamples) + ")";
         return false;
     }
-    if (out.channels > (int)kAudioMaxChannels)
+    // Match the host-side BusesProperties hardcode in
+    // SandboxedProcessor::SandboxedProcessor (stereo). The factory
+    // currently always spawns with --channels=2, so a value outside
+    // [1, kAudioMaxChannels] means a future spawn-args refactor
+    // drifted — surface it loudly instead of producing subtle
+    // channel-count mismatches downstream.
+    if (out.channels < 1 || out.channels > (int)kAudioMaxChannels)
     {
         whyFailed = "invalid --channels=" + juce::String(out.channels)
-                  + " (cap=" + juce::String((int)kAudioMaxChannels) + ")";
+                  + " (range=[1, " + juce::String((int)kAudioMaxChannels) + "])";
         return false;
     }
     return true;
@@ -360,6 +366,7 @@ void dispatchRequest(HostState& st, int requestId, const juce::String& op,
         if (! std::isfinite(sr)
             || sr <= 0.0
             || sr > (double)(std::numeric_limits<int>::max)()
+            || std::floor(sr) != sr   // reject fractional sample rates: 44100.5 → 44100 silently mismatches plugin's prepareToPlay(sr,...)
             || ! std::isfinite(bsd)
             || bsd <= 0.0
             || std::floor(bsd) != bsd  // reject fractional: 256.5 → 256 silently changes effective size
@@ -682,10 +689,19 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
         return 2;
     }
     LocalFree(argv);
-    hostLogf("args ok: plugin=%s pipe=%s shm=%s sr=%d bs=%d ch=%d",
+    // Don't log the full pipe + shm + event names — they're the OS-level
+    // kernel-object names an attacker reading our per-PID temp log
+    // (`%TEMP%\slopsmith-vst-host-<pid>.log`, unconditional) could harvest
+    // to OpenFileMappingW / OpenEventW the live sandbox audio shm before
+    // DACL hardening lands (existing deferral). The plugin path is fine
+    // (already known to anyone with read access to the install) and the
+    // numeric args carry no exfiltration value. Logging just the *length*
+    // of the kernel-object names keeps the diagnostic useful (truncation
+    // / empty cases visible) without leaking the literal name.
+    hostLogf("args ok: plugin=%s pipe=<%dchars> shm=<%dchars> sr=%d bs=%d ch=%d",
              parsed.pluginPath.toRawUTF8(),
-             parsed.controlPipe.toRawUTF8(),
-             parsed.audio.shm.toRawUTF8(),
+             (int)parsed.controlPipe.length(),
+             (int)parsed.audio.shm.length(),
              parsed.sampleRate, parsed.maxBlock, parsed.channels);
 
     HostState st;
