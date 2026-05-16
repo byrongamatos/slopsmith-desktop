@@ -6,7 +6,9 @@
 #include <thread>
 #include <atomic>
 #include <cstring>
+#include <cstdio>
 #include <cmath>
+#include <string>
 
 #include "AudioEngine.h"
 #include "VSTHost.h"
@@ -1461,6 +1463,45 @@ static Napi::Value SetMultiBypass(const Napi::CallbackInfo& info)
     return Napi::Boolean::New(env, true);
 }
 
+// ── Debug file logging ────────────────────────────────────────────────────────
+
+// Redirect the process's stderr to a file so the native [AudioEngine] /
+// [audio-native] diagnostics are captured for a bug report on machines with
+// no console (packaged Windows builds). Only invoked when SLOPSMITH_DEBUG is
+// set. freopen reuses stderr's fd, so Node's process.stderr writes — and the
+// JS layer's console.* routed there — land in the same file. Append mode so
+// the JS layer's header + early lines survive; unbuffered so a crash leaves a
+// complete tail.
+static Napi::Value EnableFileLogging(const Napi::CallbackInfo& info)
+{
+    auto env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString())
+    {
+        Napi::TypeError::New(env, "enableFileLogging(path) requires a string")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+
+#if defined(_WIN32)
+    // Widen via UTF-16 so a profile path with non-ASCII characters isn't
+    // mangled by the ANSI codepage (same rationale as VSTTrace.h).
+    const std::u16string u16 = info[0].As<Napi::String>().Utf16Value();
+    FILE* fp = _wfreopen(reinterpret_cast<const wchar_t*>(u16.c_str()),
+                         L"a", stderr);
+#else
+    const std::string path = info[0].As<Napi::String>().Utf8Value();
+    FILE* fp = std::freopen(path.c_str(), "a", stderr);
+#endif
+    if (fp == nullptr)
+        return Napi::Boolean::New(env, false);
+
+    // Unbuffered: each [AudioEngine] fprintf hits disk immediately, so a
+    // crash mid-reconfigure still leaves the diagnostic line that explains it.
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+    std::fprintf(stderr, "[audio-native] file logging enabled\n");
+    return Napi::Boolean::New(env, true);
+}
+
 // ── Module Registration ───────────────────────────────────────────────────────
 
 static Napi::Object InitModule(Napi::Env env, Napi::Object exports)
@@ -1468,6 +1509,7 @@ static Napi::Object InitModule(Napi::Env env, Napi::Object exports)
     // Lifecycle
     exports.Set("init", Napi::Function::New(env, Init));
     exports.Set("shutdown", Napi::Function::New(env, Shutdown));
+    exports.Set("enableFileLogging", Napi::Function::New(env, EnableFileLogging));
 
     // Devices
     exports.Set("getDeviceTypes", Napi::Function::New(env, GetDeviceTypes));

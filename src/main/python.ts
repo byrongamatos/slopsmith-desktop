@@ -9,6 +9,7 @@ import { app } from 'electron';
 import * as http from 'http';
 import * as net from 'net';
 import { getActiveSoundfontPath } from './soundfont-manager';
+import { isDebugEnabled } from './debug-log';
 
 let pythonProcess: ChildProcess | null = null;
 let serverPort = 18000; // Use 18000+ to avoid conflicting with Docker Slopsmith on 8000
@@ -265,6 +266,16 @@ export async function startPython(): Promise<void> {
             : path.join(__dirname, '..', '..', 'resources', 'bin') + path.delimiter
         ) + (process.env.PATH || ''),
     };
+
+    // Debug mode: raise the Slopsmith server's log level and tee its
+    // structured logs to a file. lib/logging_setup.py reads LOG_LEVEL and
+    // LOG_FILE natively, so no Slopsmith-side change is needed. The Python
+    // logs go to their own file; the subprocess's stdout/stderr are still
+    // forwarded as [python] lines into the main debug log.
+    if (isDebugEnabled()) {
+        pythonEnv.LOG_LEVEL = 'DEBUG';
+        pythonEnv.LOG_FILE = path.join(app.getPath('logs'), 'slopsmith-python.log');
+    }
 
     // Honour the "Audio Quality" preference: if the user has opted into the
     // high-quality FluidR3 soundfont and the file exists, point Python at it.

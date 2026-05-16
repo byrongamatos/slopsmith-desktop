@@ -5,6 +5,7 @@
 import { ipcMain } from 'electron';
 import * as path from 'path';
 import { app } from 'electron';
+import { isDebugEnabled, getDebugLogPath } from './debug-log';
 
 type AudioModule = Record<string, (...args: any[]) => any>;
 
@@ -39,6 +40,17 @@ export function initAudioBridge(): void {
     audio = loadNativeAddon();
 
     if (audio) {
+        // Redirect native stderr to the debug log before init() runs — that's
+        // when the [AudioEngine] device diagnostics start. Best-effort.
+        if (isDebugEnabled() && typeof audio.enableFileLogging === 'function') {
+            try {
+                const ok = audio.enableFileLogging(getDebugLogPath());
+                console.log(`[audio] Native file logging ${ok ? 'enabled' : 'failed'}`);
+            } catch (e: any) {
+                console.warn(`[audio] enableFileLogging threw: ${e.message}`);
+            }
+        }
+
         try {
             audio.init();
             console.log('[audio] Engine initialized');
