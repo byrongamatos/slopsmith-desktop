@@ -186,7 +186,8 @@ float PitchDetector::yinDetect(const float* buffer, int length, float sampleRate
 
     float freq = sampleRate / betterTau;
 
-    // Sanity check: guitar range is ~80 Hz (E2) to ~1320 Hz (E6), bass is ~40 Hz (E1) to ~330 Hz (E5)
+    // Sanity check: guitar range is ~80 Hz (E2) to ~1320 Hz (E6); bass is ~41 Hz (E1) to ~330 Hz (E4),
+    // with some extended-range basses reaching ~31 Hz (B0)
     if (freq < 20.0f || freq > 2000.0f) return -1.0f;
 
     return freq;
