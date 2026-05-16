@@ -16,7 +16,7 @@ Standalone cross-platform desktop app that wraps [Slopsmith](https://github.com/
 
 ## Install
 
-Prebuilt installers for every tagged release are published on the
+Prebuilt installers for the latest tagged release are published on the
 [GitHub Releases page](https://github.com/byrongamatos/slopsmith-desktop/releases/latest).
 
 | Platform | Download | Notes |
@@ -27,7 +27,7 @@ Prebuilt installers for every tagged release are published on the
 | Debian / Ubuntu (x86_64) | `slopsmith-desktop_<version>_amd64.deb` | `sudo apt install ./slopsmith-desktop_<version>_amd64.deb` |
 
 > **First launch may take a minute or two** while ML model caches populate
-> under `~/.cache`. Subsequent launches are fast.
+> in the app cache directory. Subsequent launches are fast.
 
 There is currently no Homebrew, winget, Chocolatey, Scoop, Flatpak, or
 Snap distribution — download directly from Releases. The app does not
