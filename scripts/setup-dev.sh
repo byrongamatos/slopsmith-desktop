@@ -42,11 +42,15 @@ case "$(uname -s)" in
         pkg-config --exists xrandr 2>/dev/null && echo "  [OK] Xrandr" || echo "  [MISSING] Xrandr dev headers"
         pkg-config --exists xcursor 2>/dev/null && echo "  [OK] Xcursor" || echo "  [MISSING] Xcursor dev headers"
         pkg-config --exists xinerama 2>/dev/null && echo "  [OK] Xinerama" || echo "  [MISSING] Xinerama dev headers"
+        command -v ffmpeg        >/dev/null 2>&1 && echo "  [OK] ffmpeg"        || echo "  [MISSING] ffmpeg (apt: ffmpeg / pacman: ffmpeg)"
+        command -v vgmstream-cli >/dev/null 2>&1 && echo "  [OK] vgmstream-cli" || echo "  [MISSING] vgmstream-cli (AUR: yay -S vgmstream-cli-bin / or github.com/vgmstream/vgmstream/releases)"
         ;;
     Darwin)
         echo ""
         echo "Checking macOS dependencies..."
         xcode-select -p &>/dev/null && echo "  [OK] Xcode Command Line Tools" || echo "  [MISSING] Run: xcode-select --install"
+        command -v ffmpeg        >/dev/null 2>&1 && echo "  [OK] ffmpeg"        || echo "  [MISSING] ffmpeg (brew install ffmpeg)"
+        command -v vgmstream-cli >/dev/null 2>&1 && echo "  [OK] vgmstream-cli" || echo "  [MISSING] vgmstream-cli (brew install vgmstream)"
         ;;
 esac
 
@@ -61,20 +65,29 @@ echo ""
 echo "Installing npm dependencies..."
 npm install
 
-# Check Slopsmith repo
-SLOPSMITH_DIR="$HOME/Repositories/slopsmith"
+# Locate Slopsmith: $SLOPSMITH_DIR env, ../slopsmith (sibling), ~/Repositories/slopsmith
+if [ -n "${SLOPSMITH_DIR:-}" ] && [ -d "$SLOPSMITH_DIR" ]; then
+    SLOPSMITH_DIR="$(cd "$SLOPSMITH_DIR" && pwd)"
+elif [ -d "$PROJECT_DIR/../slopsmith" ]; then
+    SLOPSMITH_DIR="$(cd "$PROJECT_DIR/../slopsmith" && pwd)"
+elif [ -d "$HOME/Repositories/slopsmith" ]; then
+    SLOPSMITH_DIR="$(cd "$HOME/Repositories/slopsmith" && pwd)"
+else
+    SLOPSMITH_DIR="$PROJECT_DIR/../slopsmith"
+fi
+
 if [ -d "$SLOPSMITH_DIR" ]; then
     echo ""
     echo "Slopsmith found at: $SLOPSMITH_DIR"
 
-    # Check Python deps
-    echo "Checking Python dependencies..."
-    python3 -c "import fastapi" 2>/dev/null && echo "  [OK] fastapi" || echo "  [MISSING] pip install fastapi"
-    python3 -c "import uvicorn" 2>/dev/null && echo "  [OK] uvicorn" || echo "  [MISSING] pip install uvicorn[standard]"
+    PYTHON="${PROJECT_DIR}/.venv/bin/python3"
+    [ -x "$PYTHON" ] || PYTHON="python3"
+    echo "Checking Python dependencies ($PYTHON)..."
+    "$PYTHON" -c "import fastapi" 2>/dev/null && echo "  [OK] fastapi" || echo "  [MISSING] $PYTHON -m pip install -r \"$SLOPSMITH_DIR/requirements.txt\""
+    "$PYTHON" -c "import uvicorn" 2>/dev/null && echo "  [OK] uvicorn" || echo "  [MISSING] $PYTHON -m pip install -r \"$SLOPSMITH_DIR/requirements.txt\""
 else
     echo ""
-    echo "WARNING: Slopsmith not found at $SLOPSMITH_DIR"
-    echo "Clone it: git clone https://github.com/byrongamatos/slopsmith ~/Repositories/slopsmith"
+    echo "WARNING: Slopsmith not found. Set \$SLOPSMITH_DIR, clone to $PROJECT_DIR/../slopsmith, or use ~/Repositories/slopsmith"
 fi
 
 echo ""

@@ -70,22 +70,27 @@ yet ship an auto-updater; check Releases periodically for new versions.
 - Python 3.12+
 - CMake 3.22+
 - Git
-- [Slopsmith](https://github.com/byrongamatos/slopsmith) cloned at `../slopsmith/` (preferred) or `~/Repositories/slopsmith/`
+- [Slopsmith](https://github.com/byrongamatos/slopsmith) — resolved in this order:
+  1. `$SLOPSMITH_DIR` env var
+  2. `../slopsmith/` (sibling clone, recommended)
+  3. `~/Repositories/slopsmith/` (legacy)
 
 **Linux:**
 ```bash
 # Ubuntu/Debian
 sudo apt install libasound2-dev libjack-jackd2-dev libfreetype-dev \
-  libx11-dev libxrandr-dev libxcursor-dev libxinerama-dev pkg-config cmake
+  libx11-dev libxrandr-dev libxcursor-dev libxinerama-dev pkg-config cmake \
+  ffmpeg
 
 # Arch/Manjaro
-sudo pacman -S alsa-lib jack2 freetype2 libx11 libxrandr libxcursor libxinerama cmake
+sudo pacman -S alsa-lib jack2 freetype2 libx11 libxrandr libxcursor libxinerama cmake ffmpeg
+yay -S vgmstream-cli-bin
 ```
 
 **macOS:**
 ```bash
 xcode-select --install
-brew install cmake pkg-config
+brew install cmake pkg-config ffmpeg vgmstream
 ```
 
 ### Build
@@ -124,8 +129,7 @@ inside the DevContainer:
 
 **Prerequisites**
 - [Docker](https://docs.docker.com/get-docker/)
-- The [Slopsmith](https://github.com/byrongamatos/slopsmith) server
-  repository cloned at `../slopsmith/`
+- The [Slopsmith](https://github.com/byrongamatos/slopsmith) server repository (see path resolution above)
 
 **VS Code**
 ```bash
@@ -177,12 +181,32 @@ All Slopsmith plugins work in the desktop app. The embedded Python server runs t
 
 ### Installing Plugins
 
-Use the Plugin Manager (Plugins tab) or manually:
+Use the Plugin Manager (Plugins tab) or manually. The plugins directory varies by platform:
+
+| Platform | Plugins directory |
+|----------|-------------------|
+| macOS    | `~/Library/Application Support/slopsmith-desktop/plugins/` |
+| Linux    | `~/.config/slopsmith-desktop/plugins/` |
+| Windows  | `%APPDATA%\slopsmith-desktop\plugins\` |
+
+Clone directly into the plugins directory, or symlink a repo from elsewhere (symlinks are followed).
+
+**macOS:**
 ```bash
-cd ~/.config/slopsmith-desktop/plugins/
-git clone https://github.com/user/slopsmith-plugin-foo
-# Restart the app
+git clone https://github.com/user/slopsmith-plugin-foo \
+  ~/Library/Application\ Support/slopsmith-desktop/plugins/slopsmith-plugin-foo
+# or symlink — always use an absolute path to avoid a broken self-referencing symlink
+ln -s /absolute/path/to/slopsmith-plugin-foo \
+  ~/Library/Application\ Support/slopsmith-desktop/plugins/slopsmith-plugin-foo
 ```
+
+**Linux:**
+```bash
+git clone https://github.com/user/slopsmith-plugin-foo \
+  ~/.config/slopsmith-desktop/plugins/slopsmith-plugin-foo
+```
+
+Restart the app after adding plugins.
 
 ## Reporting issues
 

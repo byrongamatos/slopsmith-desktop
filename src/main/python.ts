@@ -125,12 +125,25 @@ function findSlopsmithDir(): string {
         return path.join(process.resourcesPath, 'slopsmith');
     }
 
-    // Development: use the local slopsmith repo
-    const devPath = path.join(process.env.HOME || '', 'Repositories', 'slopsmith');
-    if (fs.existsSync(devPath)) return devPath;
+    // Development — same resolution order as scripts/resolve-slopsmith-dir.sh:
+    //   1. $SLOPSMITH_DIR
+    //   2. ../slopsmith (sibling to slopsmith-desktop)
+    //   3. ~/Repositories/slopsmith (legacy)
+    const explicit = process.env.SLOPSMITH_DIR;
+    if (explicit) {
+        const explicitPath = path.resolve(explicit);
+        if (fs.existsSync(explicitPath) && fs.statSync(explicitPath).isDirectory()) {
+            return explicitPath;
+        }
+    }
 
-    // Fallback: assume it's next to this repo
-    return path.join(__dirname, '..', '..', '..', 'slopsmith');
+    const siblingPath = path.join(__dirname, '..', '..', '..', 'slopsmith');
+    if (fs.existsSync(siblingPath)) return siblingPath;
+
+    const legacyPath = path.join(process.env.HOME || '', 'Repositories', 'slopsmith');
+    if (fs.existsSync(legacyPath)) return legacyPath;
+
+    return siblingPath;
 }
 
 function getConfigDir(): string {
@@ -185,7 +198,7 @@ export async function startPython(): Promise<void> {
 
     if (!fs.existsSync(serverScript)) {
         console.error(`[python] server.py not found at ${serverScript}`);
-        console.error('[python] Make sure slopsmith is available at ~/Repositories/slopsmith/');
+        console.error('[python] Set SLOPSMITH_DIR, clone ../slopsmith, or use ~/Repositories/slopsmith/');
         return;
     }
 
