@@ -34,6 +34,12 @@ PitchDetector::~PitchDetector()
 
 void PitchDetector::prepare(double sampleRate, int /*blockSize*/)
 {
+    // Join the detection thread before touching any shared state.  stop() signals,
+    // waits for the thread to exit, and resets 'thread' and 'running', so all
+    // mutations below are safe even if prepare() is called mid-stream (e.g. after
+    // a sample-rate change).
+    stop();
+
     currentSampleRate = sampleRate;
 
     // Recompute window so halfLen-1 >= sampleRate/25 Hz at any device rate.
@@ -41,12 +47,10 @@ void PitchDetector::prepare(double sampleRate, int /*blockSize*/)
     analysisBuffer.assign((size_t)analysisSize, 0.0f);
     analysisWritePos = 0;
 
-    if (!running.load())
-    {
-        running.store(true);
-        thread = std::make_unique<PitchDetectionThread>([this]() { detectionThread(); });
-        thread->startThread(juce::Thread::Priority::normal);
-    }
+    // Unconditional restart — stop() always leaves running==false / thread==null.
+    running.store(true);
+    thread = std::make_unique<PitchDetectionThread>([this]() { detectionThread(); });
+    thread->startThread(juce::Thread::Priority::normal);
 }
 
 void PitchDetector::stop()
