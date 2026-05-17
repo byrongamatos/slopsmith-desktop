@@ -7,13 +7,9 @@
 #include <atomic>
 #include <cstring>
 #include <cstdio>
+#include <cerrno>
 #include <cmath>
 #include <string>
-#if defined(_WIN32)
- #include <io.h>      // _dup2, _fileno
-#else
- #include <unistd.h>  // dup2, fileno
-#endif
 
 #include "AudioEngine.h"
 #include "VSTHost.h"
@@ -1470,17 +1466,19 @@ static Napi::Value SetMultiBypass(const Napi::CallbackInfo& info)
 
 // ── Debug file logging ────────────────────────────────────────────────────────
 
-// Redirect the process's stderr to a file so the native [AudioEngine] /
-// [audio-native] diagnostics are captured for a bug report on machines with
-// no console (packaged Windows builds). Only invoked when SLOPSMITH_DEBUG is
-// set.
+// Redirect the C runtime's stderr stream to a file so the native
+// [AudioEngine] / [audio-native] diagnostics are captured for a bug report on
+// machines with no console (packaged Windows builds). Only invoked when
+// SLOPSMITH_DEBUG is set. Returns "" on success, or an error description the
+// JS layer logs as an [audio] line.
 //
-// The file is opened FIRST; only on success is its fd dup2'd onto stderr.
-// freopen() would close stderr before trying the new path, so a failed open
-// would leave stderr closed and silently swallow every later diagnostic — the
-// open-then-dup2 order keeps stderr intact on failure. Append mode so the JS
-// layer's header + early lines survive; unbuffered so a crash leaves a
-// complete tail.
+// freopen (not dup2): a packaged GUI-subsystem app has no console, so stderr
+// has no valid fd — dup2 onto fileno(stderr) fails. freopen reassigns the
+// stream itself and works with or without a console. freopen would close
+// stderr before trying the path, so a bad path is ruled out FIRST with a
+// throwaway fopen probe (which never touches stderr); only once the path is
+// known-writable do we freopen. Append mode so the JS layer's header
+// survives; unbuffered so a crash leaves a complete tail.
 static Napi::Value EnableFileLogging(const Napi::CallbackInfo& info)
 {
     auto env = info.Env();
@@ -1492,34 +1490,55 @@ static Napi::Value EnableFileLogging(const Napi::CallbackInfo& info)
     }
 
 #if defined(_WIN32)
-    // Widen via UTF-16 so a profile path with non-ASCII characters isn't
-    // mangled by the ANSI codepage (same rationale as VSTTrace.h).
+    // Widen UTF-16 → wchar_t by value-converting each code unit (not a
+    // reinterpret_cast — char16_t and wchar_t are distinct types even though
+    // both are 16-bit on Windows). Wide path so a profile dir with non-ASCII
+    // characters isn't mangled by the ANSI codepage (cf. src/vst-host/main.cpp,
+    // which uses the GetEnvironmentVariableW / _wfopen wide path for the same
+    // reason).
     const std::u16string u16 = info[0].As<Napi::String>().Utf16Value();
-    FILE* f = _wfopen(reinterpret_cast<const wchar_t*>(u16.c_str()), L"a");
+    const std::wstring wpath(u16.begin(), u16.end());
+    FILE* probe = _wfopen(wpath.c_str(), L"a");
 #else
     const std::string path = info[0].As<Napi::String>().Utf8Value();
-    FILE* f = std::fopen(path.c_str(), "a");
+    FILE* probe = std::fopen(path.c_str(), "a");
 #endif
-    if (f == nullptr)
-        return Napi::Boolean::New(env, false);  // stderr left untouched
+    if (probe == nullptr)
+    {
+        // Capture errno before Napi::String::New / std::to_string, which may
+        // call library code that clobbers it.
+        const int e = errno;
+        return Napi::String::New(env, std::string("fopen failed (errno=")
+                                      + std::to_string(e) + ")");
+    }
+    std::fclose(probe);  // path is writable; stderr never touched on this path
 
-    std::fflush(stderr);
 #if defined(_WIN32)
-    const int rc = _dup2(_fileno(f), _fileno(stderr));
+    FILE* fp = _wfreopen(wpath.c_str(), L"a", stderr);
 #else
-    const int rc = dup2(fileno(f), fileno(stderr));
+    FILE* fp = std::freopen(path.c_str(), "a", stderr);
 #endif
-    // fd 2 now shares the file's open description; the extra FILE* is no
-    // longer needed (closing it does not touch the dup'd fd 2).
-    std::fclose(f);
-    if (rc == -1)
-        return Napi::Boolean::New(env, false);  // dup2 failed, stderr intact
+    if (fp == nullptr)
+    {
+        const int e = errno;
+        // freopen closes stderr before trying the path; on failure it's left
+        // closed. The probe just verified the path, so this is near-impossible
+        // — but redirect stderr to the null device so it's a valid sink rather
+        // than a closed stream that could trip later fprintf(stderr) calls.
+#if defined(_WIN32)
+        std::freopen("NUL", "w", stderr);
+#else
+        std::freopen("/dev/null", "w", stderr);
+#endif
+        return Napi::String::New(env, std::string("freopen failed (errno=")
+                                      + std::to_string(e) + ")");
+    }
 
     // Unbuffered: each [AudioEngine] fprintf hits disk immediately, so a
     // crash mid-reconfigure still leaves the diagnostic line that explains it.
     std::setvbuf(stderr, nullptr, _IONBF, 0);
     std::fprintf(stderr, "[audio-native] file logging enabled\n");
-    return Napi::Boolean::New(env, true);
+    return Napi::String::New(env, "");  // empty = success
 }
 
 // ── Module Registration ───────────────────────────────────────────────────────
