@@ -6,10 +6,17 @@ import { ipcMain } from 'electron';
 import * as path from 'path';
 import { app } from 'electron';
 import { isDebugEnabled, getDebugLogPath } from './debug-log';
+import { initVstCrashGuard, armSentinel, disarmSentinel, armEditorSentinel } from './vst-crash-guard';
 
 type AudioModule = Record<string, (...args: any[]) => any>;
 
 let audio: AudioModule | null = null;
+
+// slotId → VST3 path, populated by audio:loadVST. Lets audio:openPluginEditor
+// resolve a slot's plugin path for the crash sentinel without a native
+// getChainState call. Kept in sync on remove/clear; slot ids are stable
+// across moves so a reorder needs no upkeep.
+const vstSlotPaths = new Map<number, string>();
 
 function loadNativeAddon(): AudioModule | null {
     const addonPaths = [
@@ -61,6 +68,20 @@ export function initAudioBridge(): void {
         } catch (e: any) {
             console.error(`[audio] Init failed: ${e.message}`);
             audio = null;
+        }
+    }
+
+    // VST crash guard: promote any leftover crash sentinel into the blocklist,
+    // then hand the blocklist to the addon so it sandboxes those plugins.
+    if (audio) {
+        try {
+            const blocked = initVstCrashGuard();
+            if (typeof audio.setCrashedPlugins === 'function')
+                audio.setCrashedPlugins(blocked);
+            if (blocked.length)
+                console.log(`[audio] ${blocked.length} VST(s) on the crash blocklist — will load sandboxed`);
+        } catch (e: any) {
+            console.warn(`[audio] VST crash guard init failed: ${e.message}`);
         }
     }
 
@@ -248,7 +269,22 @@ export function initAudioBridge(): void {
     // ── Signal Chain ───────────────────────────────────────────────────────
 
     ipcMain.handle('audio:loadVST', (_event, pluginPath: string) => {
-        return audio?.loadVST(pluginPath) ?? -1;
+        // Bracket the in-process load with the crash sentinel. The sentinel
+        // detects a hard process abort: loadVST is synchronous, so a fault
+        // means this call never returns and the `finally` never runs, leaving
+        // the sentinel for the next startup to find. Any normal return OR a
+        // thrown JS exception (loadVST throws on a required-sandbox spawn
+        // failure — a clean error, not a crash) means the process survived,
+        // so disarm in `finally` to avoid a false blocklist entry.
+        armSentinel(pluginPath, 'load');
+        let slotId = -1;
+        try {
+            slotId = audio?.loadVST(pluginPath) ?? -1;
+        } finally {
+            disarmSentinel();
+        }
+        if (slotId >= 0) vstSlotPaths.set(slotId, pluginPath);
+        return slotId;
     });
 
     ipcMain.handle('audio:loadNAMModel', async (_event, modelPath: string) => {
@@ -261,6 +297,7 @@ export function initAudioBridge(): void {
 
     ipcMain.handle('audio:removeProcessor', (_event, slotId: number) => {
         audio?.removeProcessor(slotId);
+        vstSlotPaths.delete(slotId);
     });
 
     ipcMain.handle('audio:moveProcessor', (_event, from: number, to: number) => {
@@ -273,6 +310,7 @@ export function initAudioBridge(): void {
 
     ipcMain.handle('audio:clearChain', () => {
         audio?.clearChain();
+        vstSlotPaths.clear();
     });
 
     ipcMain.handle('audio:getChainState', () => {
@@ -282,7 +320,35 @@ export function initAudioBridge(): void {
     // ── Plugin Editor ──────────────────────────────────────────────────────
 
     ipcMain.handle('audio:openPluginEditor', (_event, slotId: number) => {
-        return audio?.openPluginEditor(slotId) ?? false;
+        // Editor creation is the common in-process fault point (an editor
+        // that must run on the OS main thread). Arm the sentinel with the
+        // slot's plugin path before opening; armEditorSentinel self-clears
+        // after a grace window since editor creation is asynchronous and has
+        // no synchronous success signal. The path comes from the loadVST map
+        // first; getChainState is only a fallback for slots created another
+        // way (e.g. preset restore).
+        let pluginPath = vstSlotPaths.get(slotId);
+        if (!pluginPath) {
+            const slot = (audio?.getChainState() ?? []).find((s: any) => s?.id === slotId);
+            if (slot && typeof slot.path === 'string') pluginPath = slot.path;
+        }
+        if (pluginPath) armEditorSentinel(pluginPath);
+        let opened = false;
+        try {
+            opened = audio?.openPluginEditor(slotId) ?? false;
+        } catch (e) {
+            // A thrown call is a clean failure, not a hard crash — disarm so
+            // the plugin isn't falsely blocklisted on next startup.
+            disarmSentinel();
+            throw e;
+        }
+        // A synchronous false means no editor window was created (the plugin
+        // has none, or the open failed cleanly) — nothing can fault, so clear
+        // the sentinel now instead of waiting out the grace window. On a
+        // true return the sentinel stays armed: the editor is created
+        // asynchronously and could still fault within the grace window.
+        if (!opened) disarmSentinel();
+        return opened;
     });
 
     ipcMain.handle('audio:closePluginEditor', (_event, slotId: number) => {
@@ -325,7 +391,13 @@ export function initAudioBridge(): void {
     });
 
     ipcMain.handle('audio:loadPreset', async (_event, presetJson: string) => {
-        return await audio?.loadPreset(presetJson) ?? { success: false, error: 'No audio' };
+        const result = await audio?.loadPreset(presetJson) ?? { success: false, error: 'No audio' };
+        // loadPreset rebuilds the native chain from scratch, so the cached
+        // slotId→path map no longer reflects it. Clear it — openPluginEditor
+        // then falls back to the live getChainState lookup for these slots
+        // rather than trusting a stale (possibly id-reused) entry.
+        vstSlotPaths.clear();
+        return result;
     });
 
     ipcMain.handle('audio:setMultiBypass', (_event, changes: Array<{slotId: number, bypassed: boolean}>) => {
