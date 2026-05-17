@@ -394,12 +394,24 @@ export async function startPython(): Promise<void> {
 
     pythonProcess.on('close', (code: number | null) => {
         console.log(`[python] Process exited with code ${code}`);
+        // If the child exits before it ever signalled readiness, record a
+        // startupError so waitForPython fails fast instead of polling out
+        // the full timeout. serverReady === true means startup already
+        // succeeded (a later crash is not a startup failure).
+        if (!serverReady && !startupError) {
+            startupError = `Python process exited before startup completed (code ${code ?? 'null'}).`;
+        }
         pythonProcess = null;
         serverReady = false;
     });
 
     pythonProcess.on('error', (err: Error) => {
         console.error(`[python] Failed to start: ${err.message}`);
+        // spawn itself failed (e.g. interpreter not found) — surface it to
+        // waitForPython rather than waiting out the readiness timeout.
+        if (!startupError) {
+            startupError = `Failed to start Python process: ${err.message}`;
+        }
         pythonProcess = null;
     });
 }
