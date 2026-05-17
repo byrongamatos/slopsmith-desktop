@@ -95,20 +95,22 @@ echo ""
 echo "Installing npm dependencies..."
 npm install
 
-# Locate Slopsmith: $SLOPSMITH_DIR env, ../slopsmith (sibling), ~/Repositories/slopsmith.
-# A candidate only counts if it actually contains server.py — a partial or
-# unrelated ../slopsmith directory must not mask a valid legacy checkout.
-SLOPSMITH_FOUND=""
-for candidate in "${SLOPSMITH_DIR:-}" "$PROJECT_DIR/../slopsmith" "$HOME/Repositories/slopsmith"; do
-    [ -n "$candidate" ] || continue
-    if [ -f "$candidate/server.py" ]; then
-        SLOPSMITH_FOUND="$(cd "$candidate" && pwd)"
-        break
+# Locate Slopsmith. Matches the build scripts (bundle-slopsmith.sh,
+# bundle-python.sh, build-macos.sh): an explicit $SLOPSMITH_DIR is honoured
+# verbatim — a typo or partial checkout there is surfaced, never silently
+# masked by a sibling or legacy checkout. Only when $SLOPSMITH_DIR is unset
+# do we fall back to ../slopsmith then ~/Repositories/slopsmith, and a
+# fallback candidate only counts if it actually contains server.py.
+if [ -z "${SLOPSMITH_DIR:-}" ]; then
+    if [ -f "$PROJECT_DIR/../slopsmith/server.py" ]; then
+        SLOPSMITH_DIR="$PROJECT_DIR/../slopsmith"
+    elif [ -f "$HOME/Repositories/slopsmith/server.py" ]; then
+        SLOPSMITH_DIR="$HOME/Repositories/slopsmith"
     fi
-done
-SLOPSMITH_DIR="$SLOPSMITH_FOUND"
+fi
 
-if [ -n "$SLOPSMITH_DIR" ]; then
+if [ -n "${SLOPSMITH_DIR:-}" ] && [ -f "$SLOPSMITH_DIR/server.py" ]; then
+    SLOPSMITH_DIR="$(cd "$SLOPSMITH_DIR" && pwd)"
     echo ""
     echo "Slopsmith found at: $SLOPSMITH_DIR"
 
@@ -117,6 +119,10 @@ if [ -n "$SLOPSMITH_DIR" ]; then
     echo "Checking Python dependencies (\"$PYTHON\")..."
     "$PYTHON" -c "import fastapi" 2>/dev/null && echo "  [OK] fastapi" || echo "  [MISSING] \"$PYTHON\" -m pip install -r \"$SLOPSMITH_DIR/requirements.txt\""
     "$PYTHON" -c "import uvicorn" 2>/dev/null && echo "  [OK] uvicorn" || echo "  [MISSING] \"$PYTHON\" -m pip install -r \"$SLOPSMITH_DIR/requirements.txt\""
+elif [ -n "${SLOPSMITH_DIR:-}" ]; then
+    echo ""
+    echo "WARNING: \$SLOPSMITH_DIR is set to '$SLOPSMITH_DIR' but no server.py was found there."
+    echo "         Fix the path or unset \$SLOPSMITH_DIR to fall back to ../slopsmith or ~/Repositories/slopsmith."
 else
     echo ""
     echo "WARNING: Slopsmith not found. Set \$SLOPSMITH_DIR, clone to $PROJECT_DIR/../slopsmith, or use ~/Repositories/slopsmith"

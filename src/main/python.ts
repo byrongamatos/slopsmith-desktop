@@ -129,18 +129,19 @@ function findSlopsmithDir(): string {
     //   1. $SLOPSMITH_DIR
     //   2. ../slopsmith (sibling to slopsmith-desktop)
     //   3. ~/Repositories/slopsmith (legacy)
-    // A candidate only counts if it actually contains server.py — a partial
-    // or unrelated ../slopsmith directory must not mask a valid legacy
-    // checkout, otherwise startPython fails outright instead of falling
-    // through to the next candidate.
+    // An explicit $SLOPSMITH_DIR is honoured verbatim — never fall through
+    // to a sibling/legacy checkout, so a typo or partial checkout surfaces
+    // as a clear "server.py not found" error in startPython instead of
+    // silently starting a different Slopsmith. Matches the build scripts
+    // (bundle-python.sh, build-macos.sh). For the unset case a fallback
+    // candidate only counts if it actually contains server.py, so a partial
+    // or unrelated ../slopsmith directory cannot mask a valid legacy
+    // checkout.
     const isSlopsmithRepo = (dir: string): boolean =>
         fs.existsSync(path.join(dir, 'server.py'));
 
     const explicit = process.env.SLOPSMITH_DIR;
-    if (explicit) {
-        const explicitPath = path.resolve(explicit);
-        if (isSlopsmithRepo(explicitPath)) return explicitPath;
-    }
+    if (explicit) return path.resolve(explicit);
 
     const siblingPath = path.join(__dirname, '..', '..', '..', 'slopsmith');
     if (isSlopsmithRepo(siblingPath)) return siblingPath;
