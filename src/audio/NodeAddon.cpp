@@ -1490,28 +1490,49 @@ static Napi::Value EnableFileLogging(const Napi::CallbackInfo& info)
     }
 
 #if defined(_WIN32)
-    // Widen via UTF-16 so a profile path with non-ASCII characters isn't
-    // mangled by the ANSI codepage (same rationale as VSTTrace.h).
+    // Widen UTF-16 → wchar_t by value-converting each code unit (not a
+    // reinterpret_cast — char16_t and wchar_t are distinct types even though
+    // both are 16-bit on Windows). Wide path so a profile dir with non-ASCII
+    // characters isn't mangled by the ANSI codepage (cf. src/vst-host/main.cpp,
+    // which uses the GetEnvironmentVariableW / _wfopen wide path for the same
+    // reason).
     const std::u16string u16 = info[0].As<Napi::String>().Utf16Value();
-    const wchar_t* wpath = reinterpret_cast<const wchar_t*>(u16.c_str());
-    FILE* probe = _wfopen(wpath, L"a");
+    const std::wstring wpath(u16.begin(), u16.end());
+    FILE* probe = _wfopen(wpath.c_str(), L"a");
 #else
     const std::string path = info[0].As<Napi::String>().Utf8Value();
     FILE* probe = std::fopen(path.c_str(), "a");
 #endif
     if (probe == nullptr)
+    {
+        // Capture errno before Napi::String::New / std::to_string, which may
+        // call library code that clobbers it.
+        const int e = errno;
         return Napi::String::New(env, std::string("fopen failed (errno=")
-                                      + std::to_string(errno) + ")");
+                                      + std::to_string(e) + ")");
+    }
     std::fclose(probe);  // path is writable; stderr never touched on this path
 
 #if defined(_WIN32)
-    FILE* fp = _wfreopen(wpath, L"a", stderr);
+    FILE* fp = _wfreopen(wpath.c_str(), L"a", stderr);
 #else
     FILE* fp = std::freopen(path.c_str(), "a", stderr);
 #endif
     if (fp == nullptr)
+    {
+        const int e = errno;
+        // freopen closes stderr before trying the path; on failure it's left
+        // closed. The probe just verified the path, so this is near-impossible
+        // — but redirect stderr to the null device so it's a valid sink rather
+        // than a closed stream that could trip later fprintf(stderr) calls.
+#if defined(_WIN32)
+        std::freopen("NUL", "w", stderr);
+#else
+        std::freopen("/dev/null", "w", stderr);
+#endif
         return Napi::String::New(env, std::string("freopen failed (errno=")
-                                      + std::to_string(errno) + ")");
+                                      + std::to_string(e) + ")");
+    }
 
     // Unbuffered: each [AudioEngine] fprintf hits disk immediately, so a
     // crash mid-reconfigure still leaves the diagnostic line that explains it.
