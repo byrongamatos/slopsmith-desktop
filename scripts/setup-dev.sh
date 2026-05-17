@@ -38,8 +38,9 @@ check_media_chain() {
         else
             echo "  [WARN] ffmpeg lacks the libvorbis encoder — Sloppak conversion"
             echo "         falls back to the lower-quality built-in vorbis encoder."
-            echo "         Homebrew's ffmpeg 8.1.1+ dropped libvorbis; packaged builds"
-            echo "         bundle a static ffmpeg with --enable-libvorbis instead."
+            echo "         Install an ffmpeg built with --enable-libvorbis. (Homebrew's"
+            echo "         ffmpeg 8.1.1+ dropped it; packaged builds bundle a static"
+            echo "         ffmpeg that has it.)"
         fi
     fi
 }
@@ -71,6 +72,12 @@ case "$(uname -s)" in
         xcode-select -p &>/dev/null && echo "  [OK] Xcode Command Line Tools" || echo "  [MISSING] Run: xcode-select --install"
         check_media_chain "brew install ffmpeg"
         command -v vgmstream-cli >/dev/null 2>&1 && echo "  [OK] vgmstream-cli" || echo "  [MISSING] vgmstream-cli (brew install vgmstream)"
+        ;;
+    MINGW*|MSYS*|CYGWIN*)
+        echo ""
+        echo "Checking Windows (Git Bash) dependencies..."
+        check_media_chain "install ffmpeg and add it to PATH (e.g. winget install Gyan.FFmpeg)"
+        command -v vgmstream-cli >/dev/null 2>&1 && echo "  [OK] vgmstream-cli" || echo "  [MISSING] vgmstream-cli (github.com/vgmstream/vgmstream/releases — add to PATH)"
         ;;
 esac
 

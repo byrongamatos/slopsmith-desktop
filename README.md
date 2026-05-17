@@ -86,7 +86,7 @@ sudo apt install libasound2-dev libjack-jackd2-dev libfreetype-dev \
 # artifact and place vgmstream-cli on your PATH).
 
 # Arch/Manjaro
-sudo pacman -S alsa-lib jack2 freetype2 libx11 libxrandr libxcursor libxinerama cmake ffmpeg
+sudo pacman -S alsa-lib jack2 freetype2 libx11 libxrandr libxcursor libxinerama pkgconf cmake ffmpeg
 yay -S vgmstream-cli-bin
 ```
 
@@ -206,6 +206,7 @@ Clone directly into the plugins directory, or symlink a repo from elsewhere (sym
 
 **macOS:**
 ```bash
+mkdir -p ~/Library/Application\ Support/slopsmith-desktop/plugins
 git clone https://github.com/user/slopsmith-plugin-foo \
   ~/Library/Application\ Support/slopsmith-desktop/plugins/slopsmith-plugin-foo
 # or symlink — always use an absolute path to avoid a broken self-referencing symlink
@@ -215,6 +216,7 @@ ln -s /absolute/path/to/slopsmith-plugin-foo \
 
 **Linux:**
 ```bash
+mkdir -p ~/.config/slopsmith-desktop/plugins
 git clone https://github.com/user/slopsmith-plugin-foo \
   ~/.config/slopsmith-desktop/plugins/slopsmith-plugin-foo
 ```
