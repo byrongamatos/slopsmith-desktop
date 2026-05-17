@@ -32,10 +32,20 @@ async function listInstalledPlugins(): Promise<InstalledPlugin[]> {
 
     const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
     for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
         if (entry.name.startsWith('.')) continue;
 
         const pluginPath = path.join(pluginsDir, entry.name);
+
+        // Accept real directories and symlinks that resolve to a directory.
+        // The README documents symlinking a plugin repo into the plugins
+        // dir, but Dirent.isDirectory() is false for a symlink-to-dir, so
+        // stat the resolved path instead. statSync throws on a broken
+        // symlink (or unreadable entry) — skip those.
+        let isDir = false;
+        try {
+            isDir = fs.statSync(pluginPath).isDirectory();
+        } catch { /* broken symlink or unreadable entry */ }
+        if (!isDir) continue;
         const manifestPath = path.join(pluginPath, 'plugin.json');
         const gitDir = path.join(pluginPath, '.git');
 

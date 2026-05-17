@@ -26,10 +26,12 @@ check_command() {
 
 # Verify the media chain: ffmpeg (WEM/OGG transcode), ffprobe (demucs probes
 # stream metadata before invoking ffmpeg), and ffmpeg's libvorbis encoder
-# (Sloppak conversion encodes .ogg with `-c:a libvorbis`). $1 is the install
-# hint shown when ffmpeg/ffprobe are missing.
+# (Sloppak conversion encodes .ogg with `-c:a libvorbis`).
+#   $1 — install hint shown when ffmpeg/ffprobe are missing.
+#   $2 — platform-specific remediation shown when libvorbis is absent.
 check_media_chain() {
     local install_hint="$1"
+    local libvorbis_hint="$2"
     command -v ffmpeg  >/dev/null 2>&1 && echo "  [OK] ffmpeg"  || echo "  [MISSING] ffmpeg ($install_hint)"
     command -v ffprobe >/dev/null 2>&1 && echo "  [OK] ffprobe" || echo "  [MISSING] ffprobe (ships with ffmpeg — $install_hint)"
     if command -v ffmpeg >/dev/null 2>&1; then
@@ -38,9 +40,7 @@ check_media_chain() {
         else
             echo "  [WARN] ffmpeg lacks the libvorbis encoder — Sloppak conversion"
             echo "         falls back to the lower-quality built-in vorbis encoder."
-            echo "         Install an ffmpeg built with --enable-libvorbis. (Homebrew's"
-            echo "         ffmpeg 8.1.1+ dropped it; packaged builds bundle a static"
-            echo "         ffmpeg that has it.)"
+            echo "         $libvorbis_hint"
         fi
     fi
 }
@@ -63,20 +63,23 @@ case "$(uname -s)" in
         pkg-config --exists xrandr 2>/dev/null && echo "  [OK] Xrandr" || echo "  [MISSING] Xrandr dev headers"
         pkg-config --exists xcursor 2>/dev/null && echo "  [OK] Xcursor" || echo "  [MISSING] Xcursor dev headers"
         pkg-config --exists xinerama 2>/dev/null && echo "  [OK] Xinerama" || echo "  [MISSING] Xinerama dev headers"
-        check_media_chain "apt: ffmpeg / pacman: ffmpeg"
+        check_media_chain "apt: ffmpeg / pacman: ffmpeg" \
+            "Most distro ffmpeg packages enable libvorbis — reinstall your distro's ffmpeg if this build does not."
         command -v vgmstream-cli >/dev/null 2>&1 && echo "  [OK] vgmstream-cli" || echo "  [MISSING] vgmstream-cli (AUR: yay -S vgmstream-cli-bin / or github.com/vgmstream/vgmstream/releases)"
         ;;
     Darwin)
         echo ""
         echo "Checking macOS dependencies..."
         xcode-select -p &>/dev/null && echo "  [OK] Xcode Command Line Tools" || echo "  [MISSING] Run: xcode-select --install"
-        check_media_chain "brew install ffmpeg"
+        check_media_chain "brew install ffmpeg" \
+            "Homebrew's ffmpeg 8.1.1+ omits libvorbis — install a static ffmpeg build instead (packaged builds bundle one)."
         command -v vgmstream-cli >/dev/null 2>&1 && echo "  [OK] vgmstream-cli" || echo "  [MISSING] vgmstream-cli (brew install vgmstream)"
         ;;
     MINGW*|MSYS*|CYGWIN*)
         echo ""
         echo "Checking Windows (Git Bash) dependencies..."
-        check_media_chain "install ffmpeg and add it to PATH (e.g. winget install Gyan.FFmpeg)"
+        check_media_chain "install ffmpeg and add it to PATH (e.g. winget install Gyan.FFmpeg)" \
+            "Most prebuilt Windows ffmpeg builds (e.g. Gyan) include libvorbis — pick one that does."
         command -v vgmstream-cli >/dev/null 2>&1 && echo "  [OK] vgmstream-cli" || echo "  [MISSING] vgmstream-cli (github.com/vgmstream/vgmstream/releases — add to PATH)"
         ;;
 esac
