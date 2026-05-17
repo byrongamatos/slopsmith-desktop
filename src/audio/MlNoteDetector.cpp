@@ -307,8 +307,15 @@ struct MlNoteDetector::Impl
                 // wall-clock time from its frame offset to the window end.
                 for (int f = frames - 1; f >= 1; --f)
                 {
+                    // Gate the rising edge on the note posteriorgram too — an
+                    // isolated onset spike with a near-zero note posterior is
+                    // noise; without this gate it would still advance onsetSeq
+                    // and getActiveNotes()/scoreChordWithMl() would treat the
+                    // pitch as a recent onset for ~200 ms. (Mirrors the
+                    // verified Basic Pitch onset/frame post-processing.)
                     if (onset[f * pitches + p] >= kOnsetThreshold
-                        && onset[(f - 1) * pitches + p] < kOnsetThreshold)
+                        && onset[(f - 1) * pitches + p] < kOnsetThreshold
+                        && note[f * pitches + p] >= kActivityThreshold)
                     {
                         const double t = tWindowEnd - (double) (frames - 1 - f) * kFrameMs;
                         // Advance the onset counter only for a genuinely newer
