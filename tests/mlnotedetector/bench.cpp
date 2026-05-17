@@ -79,6 +79,8 @@ bool readWav(const std::string& path, int channelMode, std::vector<float>& out, 
 
 struct ChartNote { double t; int midi; };
 struct Onset     { double t; int midi; float conf; };
+// One bridge poll: the full active-note set, mirroring audio.detectNotes().
+struct PollRec { double t; std::vector<MlNoteDetector::ActiveNote> notes; };
 } // namespace
 
 int main(int argc, char** argv)
@@ -130,6 +132,7 @@ int main(int argc, char** argv)
     const double feedRate = 1.5;
     std::map<int, int> lastSeq;
     std::vector<Onset> onsets;
+    std::vector<PollRec> polls;   // full detectNotes() stream, one entry per poll
     double nextPollSec = 0.0;
 
     for (size_t i = 0; i < wav.size(); i += block)
@@ -143,7 +146,9 @@ int main(int argc, char** argv)
         if (fedSec >= nextPollSec)
         {
             nextPollSec += 0.050;
-            for (const auto& a : det.getActiveNotes())
+            auto active = det.getActiveNotes();
+            polls.push_back({ fedSec, active });
+            for (const auto& a : active)
             {
                 auto it = lastSeq.find(a.midi);
                 if (it == lastSeq.end() || a.onsetSeq > it->second)
@@ -178,6 +183,29 @@ int main(int argc, char** argv)
         const int m = countMatches(d);
         if (m > bestMatches) { bestMatches = m; bestDelta = d; }
     }
+
+    // --- Dump the detect-stream (chart-aligned) for the JS matching harness --
+    {
+        std::ofstream js("detectstream.json");
+        js << "{\"offset\":" << bestDelta << ",\"polls\":[";
+        for (size_t pi = 0; pi < polls.size(); ++pi)
+        {
+            if (pi) js << ",";
+            js << "{\"t\":" << (polls[pi].t - bestDelta) << ",\"notes\":[";
+            for (size_t ni = 0; ni < polls[pi].notes.size(); ++ni)
+            {
+                const auto& a = polls[pi].notes[ni];
+                if (ni) js << ",";
+                js << "{\"midi\":" << a.midi
+                   << ",\"confidence\":" << a.confidence
+                   << ",\"onsetMs\":" << a.onsetAgeMs
+                   << ",\"onsetSeq\":" << a.onsetSeq << "}";
+            }
+            js << "]}";
+        }
+        js << "]}";
+    }
+    std::cout << "detect-stream: " << polls.size() << " polls -> detectstream.json\n";
 
     // --- Report at the best offset -----------------------------------------
     std::vector<double> te;       // timing errors of matched notes
