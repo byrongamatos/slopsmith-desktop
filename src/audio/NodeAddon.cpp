@@ -1141,11 +1141,11 @@ static Napi::Value OpenPluginEditor(const Napi::CallbackInfo& info)
     {
         juce::AudioProcessorEditor* editor = nullptr;
         try {
-            editor = processor->createEditor();
+            editor = processor->createEditorAndMakeActive();
         } catch (const std::exception& e) {
-            fprintf(stderr, "[AudioEngine] createEditor crashed for '%s': %s\n", name.toRawUTF8(), e.what());
+            fprintf(stderr, "[AudioEngine] createEditorAndMakeActive crashed for '%s': %s\n", name.toRawUTF8(), e.what());
         } catch (...) {
-            fprintf(stderr, "[AudioEngine] createEditor crashed for '%s': unknown error\n", name.toRawUTF8());
+            fprintf(stderr, "[AudioEngine] createEditorAndMakeActive crashed for '%s': unknown error\n", name.toRawUTF8());
         }
         if (editor)
         {

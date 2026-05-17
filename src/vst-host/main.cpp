@@ -798,11 +798,11 @@ void dispatchRequest(HostState& st, int requestId, const juce::String& op,
             if (st.editorWindow) st.editorWindow.reset();
             if (st.editor)       st.editor.reset();
 
-            st.editor.reset(st.plugin->createEditor());
+            st.editor.reset(st.plugin->createEditorAndMakeActive());
             if (!st.editor)
             {
                 st.editorRequestInFlight.store(false, std::memory_order_release);
-                reply(false, {}, "createEditor null");
+                reply(false, {}, "createEditorAndMakeActive null");
                 return;
             }
             if (st.editor->getWidth() < 16 || st.editor->getHeight() < 16)

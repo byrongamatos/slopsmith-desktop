@@ -96,8 +96,18 @@ juce::StringArray VSTHost::getDefaultScanDirectories()
     // LV2
     dirs.add(juce::File::getSpecialLocation(juce::File::userHomeDirectory)
              .getChildFile(".lv2").getFullPathName());
-    dirs.add("/usr/lib/lv2");
-    dirs.add("/usr/local/lib/lv2");
+   #if JUCE_64BIT
+    if (juce::File ("/usr/lib64/lv2").exists())
+    {
+        dirs.add("/usr/local/lib64/lv2");
+        dirs.add("/usr/lib64/lv2");
+    }
+    else
+   #endif
+    {
+        dirs.add("/usr/lib/lv2");
+        dirs.add("/usr/local/lib/lv2");
+    }
 #elif JUCE_MAC
     dirs.add(juce::File::getSpecialLocation(juce::File::userHomeDirectory)
              .getChildFile("Library/Audio/Plug-Ins/VST3").getFullPathName());
