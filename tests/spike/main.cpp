@@ -73,7 +73,10 @@ static bool readWav(const std::string& path, Wav& out)
         }
         pos += 8 + sz + (sz & 1); // chunks are word-aligned
     }
-    if (!data || channels == 0) { std::cerr << "no data/fmt chunk\n"; return false; }
+    // Guard the header fields before the rate/size math below: a malformed
+    // header (rate 0, bits 0) would otherwise divide by zero.
+    if (!data || channels == 0 || rate == 0 || bits < 8)
+    { std::cerr << "invalid or missing fmt/data chunk\n"; return false; }
 
     out.sampleRate = int(rate);
     const int bytesPerSample = bits / 8;

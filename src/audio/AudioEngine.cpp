@@ -898,6 +898,34 @@ ChordScorer::Result AudioEngine::scoreChordWithMl(const ChordScorer::Request& re
     const bool validRequest = base != nullptr
         && (int) req.tuningOffsets.size() == req.stringCount;
 
+    // Mirror ChordScorer exactly (ChordScorer.cpp): a malformed request, or
+    // any single out-of-range note, fails the WHOLE chord closed (all-miss) —
+    // do not score the sibling notes as hits when one note is invalid.
+    bool allValid = validRequest;
+    if (allValid)
+        for (const auto& n : req.notes)
+            if (n.string < 0 || n.string >= req.stringCount || n.fret < 0)
+            {
+                allValid = false;
+                break;
+            }
+
+    if (! allValid)
+    {
+        for (const auto& n : req.notes)
+        {
+            ChordScorer::NoteResult r{};
+            r.string = n.string;
+            r.fret = n.fret;
+            r.hasCents = false;
+            out.results.push_back(r);  // r.hit defaults to false
+        }
+        out.hitStrings = 0;
+        out.score = 0.0f;
+        out.isHit = false;
+        return out;
+    }
+
     int hits = 0;
     for (const auto& n : req.notes)
     {

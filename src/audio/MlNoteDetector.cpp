@@ -161,6 +161,17 @@ struct MlNoteDetector::Impl
         onsetTimeMs.fill(0.0);
         onsetSeq.fill(0);
         onsetConf.fill(0.0f);
+        // Also clear the published snapshot, under its lock: otherwise after a
+        // device restart detectNotes()/getActiveNotes()/getDominantNote() keep
+        // reporting the previous run's pitches until the next ~2 s inference
+        // window fills and publishes fresh data.
+        {
+            const juce::ScopedLock sl(snapshotLock);
+            snapActivity.fill(0.0f);
+            snapOnsetTimeMs.fill(0.0);
+            snapOnsetSeq.fill(0);
+            snapOnsetConf.fill(0.0f);
+        }
     }
 
     // Drain the FIFO, resample to 22050 Hz, append to the rolling window.
@@ -355,6 +366,9 @@ void MlNoteDetector::prepare(double sampleRate, int /*blockSize*/)
 void MlNoteDetector::stop()
 {
     impl->stopThread();
+    // Thread is joined — no race. Clear buffers and the published snapshot so
+    // a stopped detector reports nothing stale.
+    impl->clearAudioState();
 }
 
 void MlNoteDetector::pushSamples(const float* data, int numSamples)
@@ -415,13 +429,22 @@ MlNoteDetector::ActiveNote MlNoteDetector::getDominantNote() const
     const juce::ScopedLock sl(impl->snapshotLock);
     for (int p = 0; p < kNumPitches; ++p)
     {
-        const float a = impl->snapActivity[(size_t) p];
-        if (a >= kActivityThreshold && a > best.confidence)
+        // Use the same "active" definition as getActiveNotes()/isPitchActive()
+        // — sustained level OR a fresh onset — so the ML-backed
+        // getPitchDetection path doesn't miss fast/decaying notes the rest of
+        // the ML API still reports.
+        const float  level = impl->snapActivity[(size_t) p];
+        const double ot    = impl->snapOnsetTimeMs[(size_t) p];
+        const float  ageMs = (ot > 0.0) ? (float) (now - ot) : 1.0e9f;
+        const bool   recentOnset = ageMs >= 0.0f && ageMs <= kRecentOnsetMs;
+        if (level < kActivityThreshold && ! recentOnset) continue;
+        const float conf = juce::jmax(level,
+            recentOnset ? impl->snapOnsetConf[(size_t) p] : 0.0f);
+        if (conf > best.confidence)
         {
-            const double ot = impl->snapOnsetTimeMs[(size_t) p];
             best.midi = kLowestMidi + p;
-            best.confidence = a;
-            best.onsetAgeMs = (ot > 0.0) ? (float) (now - ot) : 1.0e9f;
+            best.confidence = conf;
+            best.onsetAgeMs = ageMs;
         }
     }
     return best;
