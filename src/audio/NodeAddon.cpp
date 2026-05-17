@@ -471,6 +471,9 @@ static Napi::Value DetectNotes(const Napi::CallbackInfo& info)
         // Milliseconds since this pitch's onset — lets the renderer back-date
         // a detection to the true onset instead of poll time.
         entry.Set("onsetMs", active[i].onsetAgeMs);
+        // Monotonic per-pitch onset counter — a change means a new note was
+        // struck, so the renderer can consume onsets as discrete events.
+        entry.Set("onsetSeq", active[i].onsetSeq);
         notesArr.Set((uint32_t) i, entry);
     }
 

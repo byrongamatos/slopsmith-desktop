@@ -63,6 +63,7 @@ export interface DetectedNote {
     midi: number;       // MIDI pitch, 21..108
     confidence: number; // note posteriorgram, 0..1
     onsetMs: number;    // ms since this pitch's onset (large = sustained tail)
+    onsetSeq: number;   // per-pitch onset counter; a change == a new note struck
 }
 export interface NoteDetection {
     notes: DetectedNote[];

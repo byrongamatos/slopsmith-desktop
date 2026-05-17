@@ -43,6 +43,10 @@ constexpr float kOnsetThreshold     = 0.50f;  // onset posteriorgram rising edge
 // A pitch is reported active for this long after its onset even once its
 // sustained level has decayed — so fast notes aren't missed between polls.
 constexpr float kRecentOnsetMs      = 200.0f;
+// Two onset edges on the same pitch must be at least this far apart to count
+// as distinct notes. Below the chug rate of fast palm muting (~10/s), above
+// the per-inference jitter of re-detecting the same onset.
+constexpr double kMinOnsetGapMs     = 45.0;
 
 const char* noteNameFor(int midi)
 {
@@ -101,9 +105,18 @@ struct MlNoteDetector::Impl
     // Active-pitch snapshot, written by the inference thread, read from the
     // main (N-API) thread under snapshotLock. Neither writer nor reader is the
     // audio thread, so a lock here is correct and cheap.
+    // Per-pitch onset tracking, owned by the inference thread (no lock — only
+    // runInferenceIfDue() touches these). onsetTimeMs is the monotonic ms of
+    // the last *distinct* onset; onsetSeq counts distinct onsets; onsetConf is
+    // the note posteriorgram at that onset.
+    std::array<double, kModelPitches> onsetTimeMs{};
+    std::array<int, kModelPitches>    onsetSeq{};
+    std::array<float, kModelPitches>  onsetConf{};
+
     juce::CriticalSection snapshotLock;
     std::array<float, kModelPitches>  snapActivity{};      // sustained note level
     std::array<double, kModelPitches> snapOnsetTimeMs{};   // monotonic ms of last onset; 0 = none
+    std::array<int, kModelPitches>    snapOnsetSeq{};      // distinct-onset counter
     std::array<float, kModelPitches>  snapOnsetConf{};     // note posteriorgram at that onset
 
     // Reusable inference scratch — avoids per-hop allocation.
@@ -145,6 +158,9 @@ struct MlNoteDetector::Impl
         totalResampled = 0;
         sinceInference = 0;
         fifo.reset();
+        onsetTimeMs.fill(0.0);
+        onsetSeq.fill(0);
+        onsetConf.fill(0.0f);
     }
 
     // Drain the FIFO, resample to 22050 Hz, append to the rolling window.
@@ -219,9 +235,7 @@ struct MlNoteDetector::Impl
             if (pitches != kModelPitches) return;  // unexpected model
 
             const int firstFrame = juce::jmax(0, frames - kFreshFrames);
-            std::array<float, kModelPitches>  act{};
-            std::array<double, kModelPitches> onsetTime{};
-            std::array<float, kModelPitches>  onsetConf{};
+            std::array<float, kModelPitches> act{};
             for (int p = 0; p < kModelPitches; ++p)
             {
                 // Sustained level: peak note posteriorgram over the fresh frames.
@@ -231,15 +245,24 @@ struct MlNoteDetector::Impl
                 act[(size_t) p] = a;
 
                 // Most recent onset: latest rising edge of the onset
-                // posteriorgram anywhere in the window. Back-date it to a
+                // posteriorgram anywhere in the window, back-dated to a
                 // wall-clock time from its frame offset to the window end.
                 for (int f = frames - 1; f >= 1; --f)
                 {
                     if (onset[f * pitches + p] >= kOnsetThreshold
                         && onset[(f - 1) * pitches + p] < kOnsetThreshold)
                     {
-                        onsetTime[(size_t) p] = tWindowEnd - (double) (frames - 1 - f) * kFrameMs;
-                        onsetConf[(size_t) p] = note[f * pitches + p];
+                        const double t = tWindowEnd - (double) (frames - 1 - f) * kFrameMs;
+                        // Advance the onset counter only for a genuinely newer
+                        // onset — the same physical onset re-detected on the
+                        // next inference computes ~the same time and must not
+                        // be counted twice.
+                        if (t > onsetTimeMs[(size_t) p] + kMinOnsetGapMs)
+                        {
+                            onsetTimeMs[(size_t) p] = t;
+                            onsetSeq[(size_t) p] += 1;
+                            onsetConf[(size_t) p] = note[f * pitches + p];
+                        }
                         break;
                     }
                 }
@@ -247,7 +270,8 @@ struct MlNoteDetector::Impl
 
             const juce::ScopedLock snap(snapshotLock);
             snapActivity = act;
-            snapOnsetTimeMs = onsetTime;
+            snapOnsetTimeMs = onsetTimeMs;
+            snapOnsetSeq = onsetSeq;
             snapOnsetConf = onsetConf;
         }
         catch (...)
@@ -373,6 +397,7 @@ std::vector<MlNoteDetector::ActiveNote> MlNoteDetector::getActiveNotes() const
                 n.confidence = juce::jmax(level,
                     recentOnset ? impl->snapOnsetConf[(size_t) p] : 0.0f);
                 n.onsetAgeMs = ageMs;
+                n.onsetSeq = impl->snapOnsetSeq[(size_t) p];
                 notes.push_back(n);
             }
         }

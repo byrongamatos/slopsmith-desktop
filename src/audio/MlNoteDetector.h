@@ -51,6 +51,11 @@ public:
         // back-date a detection to the true onset rather than poll time.
         // >= 1e6 means no recent onset (sustained / decaying tail).
         float onsetAgeMs = 1.0e9f;
+        // Monotonic per-pitch onset counter — increments once per distinct
+        // detected onset. A change since the last poll means a NEW note was
+        // struck on this pitch, letting the caller treat onsets as discrete
+        // events instead of polling "is this pitch active".
+        int   onsetSeq = 0;
     };
 
     // Pitches that are sounding now — either sustained above the activity
