@@ -192,6 +192,17 @@ if(ONNXRUNTIME_AVAILABLE)
                 "${ONNXRUNTIME_RUNTIME_LIB}"
                 "$<TARGET_FILE_DIR:slopsmith_audio>/"
         COMMENT "Staging ONNX Runtime shared library next to slopsmith_audio.node")
+
+    # Also stage the shared-provider stub that ONNX Runtime dlopen()s next to
+    # the main runtime. Conditional: it ships in the standard releases, but the
+    # cmake probe leaves ONNXRUNTIME_PROVIDERS_LIB empty if a layout lacks it.
+    if(ONNXRUNTIME_PROVIDERS_LIB)
+        add_custom_command(TARGET slopsmith_audio POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${ONNXRUNTIME_PROVIDERS_LIB}"
+                    "$<TARGET_FILE_DIR:slopsmith_audio>/"
+            COMMENT "Staging ONNX Runtime providers_shared library next to slopsmith_audio.node")
+    endif()
 else()
     target_compile_definitions(slopsmith_audio PRIVATE SLOPSMITH_ONNX_SUPPORT=0)
 endif()

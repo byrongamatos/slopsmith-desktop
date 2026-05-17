@@ -37,7 +37,7 @@
       "dist/**/*",
       "build/Release/*.node",
       "build/Release/libonnxruntime*",
-      "build/Release/onnxruntime.dll"
+      "build/Release/onnxruntime*.dll"
     ],
     "extraResources": [
       {
@@ -68,7 +68,7 @@
     "asarUnpack": [
       "build/Release/*.node",
       "build/Release/libonnxruntime*",
-      "build/Release/onnxruntime.dll"
+      "build/Release/onnxruntime*.dll"
     ],
     "linux": {
       "target": [
