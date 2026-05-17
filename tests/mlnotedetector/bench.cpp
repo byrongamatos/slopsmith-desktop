@@ -124,12 +124,17 @@ int main(int argc, char** argv)
     { std::cerr << "FAIL: loadModel returned false\n"; return 1; }
     det.prepare((double) sampleRate, 256);
 
-    // Feed the WAV at ~1.5x real time (the detector sustains ~1.6x; this keeps
-    // its input FIFO from overflowing) and poll the active set every 50 ms,
+    // Feed the WAV at real time (1.0x) and poll the active set every 50 ms,
     // the same cadence as the plugin. A rising per-pitch onsetSeq is a
     // detected onset; back-date it by onsetAgeMs to its true time.
+    //
+    // feedRate MUST stay 1.0: onsetAgeMs is measured in wall-clock time inside
+    // MlNoteDetector, while fedSec is the fed-audio timeline. Feeding faster
+    // than real time desynchronises the two — a wall-clock age would map to a
+    // larger span of fed audio — so back-dated onset times would drift later
+    // than the chart over a long recording. At 1.0x the two timelines agree.
     const int block = 256;
-    const double feedRate = 1.5;
+    const double feedRate = 1.0;
     std::map<int, int> lastSeq;
     std::vector<Onset> onsets;
     std::vector<PollRec> polls;   // full detectNotes() stream, one entry per poll

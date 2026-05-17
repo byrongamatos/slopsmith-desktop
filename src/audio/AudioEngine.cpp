@@ -890,6 +890,14 @@ ChordScorer::Result AudioEngine::scoreChordWithMl(const ChordScorer::Request& re
     // constraint scorer's fail-closed contract.
     const std::vector<int>* base = ChordScorer::standardMidiFor(req.arrangement, req.stringCount);
 
+    // Mirror ChordScorer's request-shape validation (ChordScorer.cpp): a
+    // tuningOffsets vector whose length doesn't match stringCount is a
+    // malformed request — fail closed (every note a miss) instead of
+    // silently substituting zero offsets, which could score real hits
+    // where the constraint scorer would have returned all-miss.
+    const bool validRequest = base != nullptr
+        && (int) req.tuningOffsets.size() == req.stringCount;
+
     int hits = 0;
     for (const auto& n : req.notes)
     {
@@ -898,7 +906,7 @@ ChordScorer::Result AudioEngine::scoreChordWithMl(const ChordScorer::Request& re
         r.fret = n.fret;
         r.hasCents = false;  // ML judges by pitch-class membership, not cents
 
-        if (base != nullptr && n.string >= 0
+        if (validRequest && n.string >= 0
             && n.string < (int) base->size() && n.fret >= 0)
         {
             // Expected MIDI exactly as ChordScorer computes it:

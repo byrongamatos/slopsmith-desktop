@@ -22,6 +22,16 @@ endif()
 set(REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 add_subdirectory("${REPO_ROOT}/JUCE" juce_build EXCLUDE_FROM_ALL)
 
+# ONNX Runtime ships a platform-specific library file name — resolve it so
+# the documented ONNXRUNTIME_ROOT build works on macOS and Windows too.
+if(WIN32)
+    set(ONNXRUNTIME_LIB "${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib")
+elseif(APPLE)
+    set(ONNXRUNTIME_LIB "${ONNXRUNTIME_ROOT}/lib/libonnxruntime.dylib")
+else()
+    set(ONNXRUNTIME_LIB "${ONNXRUNTIME_ROOT}/lib/libonnxruntime.so")
+endif()
+
 foreach(tgt mlnd_test mlnd_bench)
     if(tgt STREQUAL mlnd_test)
         set(_src test.cpp)
@@ -40,7 +50,7 @@ foreach(tgt mlnd_test mlnd_bench)
     target_link_libraries(${tgt} PRIVATE
         juce::juce_core
         juce::juce_audio_basics
-        "${ONNXRUNTIME_ROOT}/lib/libonnxruntime.so")
+        "${ONNXRUNTIME_LIB}")
     set_target_properties(${tgt} PROPERTIES
         BUILD_RPATH "${ONNXRUNTIME_ROOT}/lib")
 endforeach()

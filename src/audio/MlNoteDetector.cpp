@@ -431,10 +431,21 @@ bool MlNoteDetector::isPitchActive(int midi, float* confidenceOut) const
 {
     const int p = midi - kLowestMidi;
     if (p < 0 || p >= kNumPitches) return false;
+    const double now = juce::Time::getMillisecondCounterHiRes();
     const juce::ScopedLock sl(impl->snapshotLock);
-    const float a = impl->snapActivity[(size_t) p];
-    if (confidenceOut != nullptr) *confidenceOut = a;
-    return a >= kActivityThreshold;
+    // Match getActiveNotes()'s definition of "active" exactly: sustained
+    // level OR a fresh onset. Checking the level alone would miss a
+    // freshly-struck fast/decaying note that getActiveNotes() — and hence
+    // detectNotes() — still reports, leaving the chord-scoring path
+    // (scoreChordWithMl) inconsistent with the detectNotes path.
+    const float  level = impl->snapActivity[(size_t) p];
+    const double ot    = impl->snapOnsetTimeMs[(size_t) p];
+    const float  ageMs = (ot > 0.0) ? (float) (now - ot) : 1.0e9f;
+    const bool   recentOnset = ageMs >= 0.0f && ageMs <= kRecentOnsetMs;
+    if (confidenceOut != nullptr)
+        *confidenceOut = juce::jmax(level,
+            recentOnset ? impl->snapOnsetConf[(size_t) p] : 0.0f);
+    return level >= kActivityThreshold || recentOnset;
 }
 
 #else // !SLOPSMITH_ONNX_SUPPORT — inert stub, YIN fallback covers detection.
