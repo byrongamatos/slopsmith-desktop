@@ -23,6 +23,12 @@ let sentinelPath = '';
 let blocklistPath = '';
 const blocklist = new Set<string>();
 
+// The pending editor-grace timer, if any. Tracked so a second editor-open
+// cancels the first's timer — otherwise the older timer would clear the
+// newer sentinel early and a crash from the second plugin would go
+// unrecorded.
+let editorTimer: ReturnType<typeof setTimeout> | null = null;
+
 // Windows VST paths are case-insensitive; normalise so the addon's
 // case-insensitive match and ours agree.
 const norm = (p: string): string => p.trim().toLowerCase();
@@ -85,10 +91,17 @@ export function disarmSentinel(): void {
     clearSentinel();
 }
 
-// Arm for an editor-open and self-clear after the grace window. The timer is
-// unref'd so it never holds the app open on its own.
+// Arm for an editor-open and self-clear after the grace window. Any pending
+// grace timer from an earlier editor-open is cancelled first so it can't
+// clear this newer sentinel early. The timer is unref'd so it never holds
+// the app open on its own.
 export function armEditorSentinel(pluginPath: string): void {
     if (!pluginPath || !sentinelPath) return;
+    if (editorTimer) clearTimeout(editorTimer);
     armSentinel(pluginPath, 'editor');
-    setTimeout(disarmSentinel, EDITOR_GRACE_MS).unref();
+    editorTimer = setTimeout(() => {
+        editorTimer = null;
+        disarmSentinel();
+    }, EDITOR_GRACE_MS);
+    editorTimer.unref();
 }
