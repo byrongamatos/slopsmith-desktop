@@ -44,25 +44,27 @@ if (audio) {
                 'addon exposes loadNoteModel');
             assert.ok(fs.existsSync(MODEL), `model present at ${MODEL}`);
             const ok = audio.loadNoteModel(MODEL);
-            // ok is false if ONNX support was compiled out — tolerate that,
-            // but then isMlNoteDetection must agree.
+            // ok is false if ONNX support was compiled out — tolerate that.
             assert.equal(typeof ok, 'boolean');
-            assert.equal(audio.isMlNoteDetection(), ok,
-                'isMlNoteDetection agrees with the load result');
+            // isMlNoteDetection() reports *readiness* — that the detector has
+            // published an inference snapshot — not merely that a model
+            // loaded. Readiness needs a running audio device, which this
+            // smoke test never starts, so it is false here regardless of the
+            // load result (and also false when ONNX is compiled out).
+            assert.equal(audio.isMlNoteDetection(), false,
+                'isMlNoteDetection is false until the detector has run inference');
         });
 
         await t.test('loadNoteModel fails soft on a missing file', () => {
-            // loadNoteModel returns "is ML available after this call". A
-            // missing file never throws and never tears down a model that was
-            // already loaded, so the result stays consistent with
-            // isMlNoteDetection().
-            const before = audio.isMlNoteDetection();
+            // loadNoteModel returns "is ML available after this call" (a model
+            // is loaded with a valid contract). A missing file never throws
+            // and never tears down a model that was already loaded, so it
+            // returns a boolean and leaves detector readiness unchanged.
+            const readyBefore = audio.isMlNoteDetection();
             const ok = audio.loadNoteModel(path.join(__dirname, 'no-such-model.onnx'));
             assert.equal(typeof ok, 'boolean', 'missing model returns a boolean, does not throw');
-            assert.equal(audio.isMlNoteDetection(), before,
-                'a failed load must not change ML availability');
-            assert.equal(ok, before,
-                'return value reflects post-call availability');
+            assert.equal(audio.isMlNoteDetection(), readyBefore,
+                'a failed load must not change detector readiness');
         });
 
         await t.test('getPitchDetection keeps its shape', () => {
