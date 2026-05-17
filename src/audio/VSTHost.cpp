@@ -97,7 +97,7 @@ juce::StringArray VSTHost::getDefaultScanDirectories()
     dirs.add(juce::File::getSpecialLocation(juce::File::userHomeDirectory)
              .getChildFile(".lv2").getFullPathName());
    #if JUCE_64BIT
-    if (juce::File ("/usr/lib64/lv2").exists() || juce::File ("/usr/local/lib64/lv2").exists())
+    if (juce::File ("/usr/lib64/lv2").exists())
     {
         dirs.add("/usr/local/lib64/lv2");
         dirs.add("/usr/lib64/lv2");
@@ -105,8 +105,8 @@ juce::StringArray VSTHost::getDefaultScanDirectories()
     else
    #endif
     {
-        dirs.add("/usr/local/lib/lv2");
         dirs.add("/usr/lib/lv2");
+        dirs.add("/usr/local/lib/lv2");
     }
 #elif JUCE_MAC
     dirs.add(juce::File::getSpecialLocation(juce::File::userHomeDirectory)
