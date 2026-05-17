@@ -75,6 +75,11 @@ yet ship an auto-updater; check Releases periodically for new versions.
   2. `../slopsmith/` (sibling clone, recommended)
   3. `~/Repositories/slopsmith/` (legacy)
 
+  An explicit `$SLOPSMITH_DIR` is used verbatim — if it is wrong, startup
+  fails with a clear error rather than falling back. On Windows, set it to a
+  native path (`C:\src\slopsmith`), not an MSYS/Git-Bash path
+  (`/c/src/slopsmith`), which Node resolves against the current drive root.
+
 **Linux:**
 ```bash
 # Ubuntu/Debian

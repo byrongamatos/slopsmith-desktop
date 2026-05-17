@@ -13,6 +13,10 @@ import { getActiveSoundfontPath } from './soundfont-manager';
 let pythonProcess: ChildProcess | null = null;
 let serverPort = 18000; // Use 18000+ to avoid conflicting with Docker Slopsmith on 8000
 let serverReady = false;
+// Set by startPython when the backend cannot even be spawned (e.g. server.py
+// missing). waitForPython checks this so a config error fails fast with a
+// specific message instead of running out the full readiness timeout.
+let startupError: string | null = null;
 
 export function getPythonPort(): number {
     return serverPort;
@@ -140,6 +144,9 @@ function findSlopsmithDir(): string {
     const isSlopsmithRepo = (dir: string): boolean =>
         fs.existsSync(path.join(dir, 'server.py'));
 
+    // $SLOPSMITH_DIR must be a native path. On Windows, pass a native path
+    // (C:\\src\\slopsmith), not an MSYS/Git-Bash path (/c/src/slopsmith) —
+    // Node resolves the latter against the current drive root. See README.
     const explicit = process.env.SLOPSMITH_DIR;
     if (explicit) return path.resolve(explicit);
 
@@ -199,12 +206,15 @@ function getDLCDir(): string {
 }
 
 export async function startPython(): Promise<void> {
+    startupError = null;
     const slopsmithDir = findSlopsmithDir();
     const serverScript = path.join(slopsmithDir, 'server.py');
 
     if (!fs.existsSync(serverScript)) {
-        console.error(`[python] server.py not found at ${serverScript}`);
-        console.error('[python] Set SLOPSMITH_DIR, clone ../slopsmith, or use ~/Repositories/slopsmith/');
+        startupError = `Slopsmith server.py not found at ${serverScript}. `
+            + 'Set SLOPSMITH_DIR to your Slopsmith checkout, clone it to ../slopsmith, '
+            + 'or use ~/Repositories/slopsmith/.';
+        console.error(`[python] ${startupError}`);
         return;
     }
 
@@ -418,6 +428,10 @@ export async function waitForPython(): Promise<number> {
     const maxAttempts = 600; // 5 minutes
     const intervalMs = 500;
     for (let i = 0; i < maxAttempts; i++) {
+        // Fail fast on a config error startPython already diagnosed (e.g.
+        // server.py missing) rather than waiting out the whole timeout.
+        if (startupError) throw new Error(startupError);
+
         if (serverReady) {
             const ok = await new Promise<boolean>((resolve) => {
                 const req = http.get(`http://127.0.0.1:${serverPort}/api/plugins`, (res) => {
