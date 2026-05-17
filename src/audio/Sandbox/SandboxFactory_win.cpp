@@ -144,10 +144,13 @@ bool shouldSandbox(const juce::PluginDescription& desc)
 
     // Runtime crash blocklist: a plugin that took the app down in-process on
     // a previous run is routed through the sandbox even if it doesn't match
-    // the filename heuristic below.
+    // the filename heuristic below. Compared in canonical full-path form so a
+    // slash-direction or relative/absolute difference between the persisted
+    // path and the one handed to LoadVST can't cause a silent miss.
     {
         const std::lock_guard<std::mutex> lock(g_crashedPluginsMutex);
-        if (g_crashedPlugins.contains(desc.fileOrIdentifier, /*ignoreCase*/ true))
+        const auto canonical = path.getFullPathName();
+        if (g_crashedPlugins.contains(canonical, /*ignoreCase*/ true))
         {
             VST_TRACE("shouldSandbox: %s — on the runtime crash blocklist",
                       desc.fileOrIdentifier.toRawUTF8());
@@ -213,9 +216,14 @@ std::unique_ptr<juce::AudioProcessor> tryLoadSandboxed(
 void setCrashedPlugins(const juce::StringArray& pluginPaths)
 {
     const std::lock_guard<std::mutex> lock(g_crashedPluginsMutex);
-    g_crashedPlugins = pluginPaths;
+    // Store in canonical full-path form so the shouldSandbox() lookup matches
+    // regardless of slash direction or relative/absolute differences between
+    // the persisted path and the one LoadVST is given.
+    g_crashedPlugins.clearQuick();
+    for (const auto& p : pluginPaths)
+        g_crashedPlugins.add(p.isNotEmpty() ? juce::File(p).getFullPathName() : p);
     VST_TRACE("setCrashedPlugins: %d plugin(s) on the runtime crash blocklist",
-              pluginPaths.size());
+              g_crashedPlugins.size());
 }
 
 } // namespace slopsmith::sandbox

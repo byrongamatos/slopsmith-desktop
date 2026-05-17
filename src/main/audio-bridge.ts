@@ -377,7 +377,13 @@ export function initAudioBridge(): void {
     });
 
     ipcMain.handle('audio:loadPreset', async (_event, presetJson: string) => {
-        return await audio?.loadPreset(presetJson) ?? { success: false, error: 'No audio' };
+        const result = await audio?.loadPreset(presetJson) ?? { success: false, error: 'No audio' };
+        // loadPreset rebuilds the native chain from scratch, so the cached
+        // slotId→path map no longer reflects it. Clear it — openPluginEditor
+        // then falls back to the live getChainState lookup for these slots
+        // rather than trusting a stale (possibly id-reused) entry.
+        vstSlotPaths.clear();
+        return result;
     });
 
     ipcMain.handle('audio:setMultiBypass', (_event, changes: Array<{slotId: number, bypassed: boolean}>) => {

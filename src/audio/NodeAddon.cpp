@@ -832,6 +832,52 @@ static Napi::Value SetCrashedPlugins(const Napi::CallbackInfo& info)
 
 // ── Signal Chain Management ──────────────────────────────────────────────────
 
+// Load a VST3, routing it through the out-of-process sandbox when
+// shouldSandbox() says so (the filename pre-seed or the runtime crash
+// blocklist), otherwise loading it in-process on the JUCE message thread.
+//
+// On a *required*-sandbox failure (the plugin matched shouldSandbox but the
+// sandbox couldn't spawn) this returns nullptr with `error` set and
+// `sandboxRequired` true, so the caller can choose how to surface it —
+// LoadVST throws to JS, LoadPreset just skips the slot. Used by both so a
+// crash-blocklisted plugin can never sneak back in-process via preset
+// restore.
+static std::unique_ptr<juce::AudioProcessor> loadVstSandboxAware(
+    const juce::String& pluginPath, double sr, int bs,
+    juce::String& error, bool& sandboxRequired)
+{
+    sandboxRequired = false;
+
+    juce::PluginDescription probeDesc;
+    probeDesc.fileOrIdentifier = pluginPath;
+    probeDesc.name = juce::File(pluginPath).getFileNameWithoutExtension();
+
+    if (slopsmith::sandbox::shouldSandbox(probeDesc))
+    {
+        sandboxRequired = true;
+        juce::String sandboxErr;
+        auto processor = slopsmith::sandbox::tryLoadSandboxed(
+            probeDesc, sr, bs, sandboxErr);
+        if (!processor)
+        {
+            error = "sandbox load failed: "
+                  + (sandboxErr.isEmpty() ? juce::String("unknown error")
+                                          : sandboxErr);
+            VST_TRACE("loadVstSandboxAware: sandbox path declined/failed: %s",
+                      sandboxErr.toRawUTF8());
+        }
+        return processor;
+    }
+
+    // In-process JUCE load. Instantiate on the JUCE message thread for the
+    // COM-apartment reason documented in VSTHost::loadPlugin.
+    std::unique_ptr<juce::AudioPluginInstance> instance;
+    dispatchOnMessageThread([&]() {
+        instance = vstHost->loadPlugin(pluginPath, sr, bs, error);
+    });
+    return instance;
+}
+
 static Napi::Value LoadVST(const Napi::CallbackInfo& info)
 {
     auto env = info.Env();
@@ -847,74 +893,30 @@ static Napi::Value LoadVST(const Napi::CallbackInfo& info)
     auto bs = engine->getCurrentBlockSize();
     VST_TRACE("LoadVST: path='%s' sr=%.0f bs=%d", pluginPath.c_str(), sr, bs);
 
-    // 1) Try the out-of-process sandbox path for plugins on the denylist.
-    //    This is a no-op on macOS/Linux until those sandbox PRs land — the
-    //    stub factory returns nullptr and we fall through.
+    // Load via the shared sandbox-aware path: shouldSandbox() routes denylist
+    // / crash-blocklist plugins out-of-process, everything else in-process.
     bool sandboxRequired = false;
-    juce::String sandboxErr;
-    {
-        juce::PluginDescription probeDesc;
-        probeDesc.fileOrIdentifier = juce::String(pluginPath);
-        // We haven't scanned the plugin yet, so manufacturer/UID matching
-        // isn't available. shouldSandbox() inspects fileOrIdentifier and
-        // falls back to a filename heuristic for the NI denylist (Guitar
-        // Rig / Massive / Kontakt / …). `name` here is synthesised from
-        // the path: it's NOT what shouldSandbox checks today, but it
-        // does flow through `tryLoadSandboxed` into the spawn config's
-        // pluginName (used for diagnostic logging). Once the post-scan
-        // path lands and we have a real PluginDescription with the
-        // plugin's reported name, this synthetic value goes away.
-        probeDesc.name = juce::File(juce::String(pluginPath)).getFileNameWithoutExtension();
-        if (slopsmith::sandbox::shouldSandbox(probeDesc))
-        {
-            sandboxRequired = true;
-            processor = slopsmith::sandbox::tryLoadSandboxed(
-                probeDesc, sr, bs, sandboxErr);
-            if (!processor)
-                VST_TRACE("LoadVST: sandbox path declined/failed: %s",
-                          sandboxErr.toRawUTF8());
-        }
-    }
+    processor = loadVstSandboxAware(juce::String(pluginPath), sr, bs,
+                                    error, sandboxRequired);
 
-    // 2) If the plugin is on the denylist, sandboxing is *required* — falling
-    //    back to in-process is what crashed the addon to begin with (the
-    //    motivation for the denylist). Surface the failure to the caller.
+    // If the plugin is on the denylist, sandboxing is *required* — falling
+    // back to in-process is what crashed the addon to begin with. Surface the
+    // failure to the caller by throwing.
     if (sandboxRequired && !processor)
     {
-        error = "sandbox load failed: "
-              + (sandboxErr.isEmpty() ? juce::String("unknown error") : sandboxErr);
         // Mirror the in-process load's stderr format so a JS test harness or
         // Electron renderer sees the same diagnostics regardless of path.
         fprintf(stderr, "[LoadVST] Failed: %s\n", error.toRawUTF8());
         // Throw a Napi::Error so the JS caller gets the actual sandbox-spawn
         // diagnostic instead of an opaque -1. Renderers must `try/catch
-        // addon.loadVST(...)` to handle this path — `ThrowAsJavaScriptException`
-        // marks the napi call as having thrown, so JS sees a thrown exception
-        // and the numeric return value below is discarded by the binding
-        // layer (callers cannot observe both an exception AND a `-1`
-        // return; if a caller doesn't catch, the exception propagates
-        // uncaught). The Napi::Number::New is kept only to satisfy the
-        // function signature.
-        // Invariant: this `return` MUST happen before any
-        // engine->getSignalChain() mutation. The throw above marks the
-        // napi call as having thrown; if a future edit adds work between
-        // the sandbox decision and this return, that work could partially
-        // mutate the signal chain while JS sees an exception — leaving
-        // a dangling slot that no one will clean up.
+        // addon.loadVST(...)` to handle this path. Invariant: this `return`
+        // MUST happen before any engine->getSignalChain() mutation — the
+        // throw marks the napi call as having thrown, so any chain mutation
+        // between here and return would leave a dangling slot while JS sees
+        // an exception. The Napi::Number::New only satisfies the signature.
         Napi::Error::New(env, error.toStdString())
             .ThrowAsJavaScriptException();
         return Napi::Number::New(env, -1);
-    }
-
-    // 3) Otherwise: in-process JUCE load (today's path). Instantiate on the
-    //    JUCE message thread for the COM-apartment reason documented above.
-    if (!processor)
-    {
-        std::unique_ptr<juce::AudioPluginInstance> instance;
-        dispatchOnMessageThread([&]() {
-            instance = vstHost->loadPlugin(juce::String(pluginPath), sr, bs, error);
-        });
-        processor = std::move(instance);
     }
 
     if (processor)
@@ -1365,19 +1367,18 @@ public:
 
             if (type == (int)ProcessorSlot::Type::VST && vstHost)
             {
+                // Sandbox-aware load: a crash-blocklisted plugin restored
+                // from a preset must still go out-of-process, otherwise the
+                // "one crash, then always sandbox" contract is defeated.
                 juce::String err;
-                std::unique_ptr<juce::AudioPluginInstance> instance;
-                // See LoadVST for why this must run on the JUCE message thread.
-                dispatchOnMessageThread([&]() {
-                    instance = vstHost->loadPlugin(path, sr, bs, err);
-                });
-                if (!instance)
+                bool sandboxRequired = false;
+                processor = loadVstSandboxAware(path, sr, bs, err, sandboxRequired);
+                if (!processor)
                 {
                     fprintf(stderr, "[LoadPreset] VST load failed: %s (%s)\n",
                             name.toRawUTF8(), err.toRawUTF8());
                     continue;
                 }
-                processor = std::move(instance);
             }
             else if (type == (int)ProcessorSlot::Type::NAM)
             {

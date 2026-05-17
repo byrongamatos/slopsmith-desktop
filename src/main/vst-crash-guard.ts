@@ -58,6 +58,12 @@ export function initVstCrashGuard(): string[] {
     } catch { /* no sentinel — the app exited cleanly last run */ }
     clearSentinel();
 
+    // A clean shutdown is, by definition, not a crash. If the app quits while
+    // an editor grace-window sentinel is still armed (the unref'd timer
+    // hasn't fired yet), clear it here so the plugin isn't falsely blocklisted
+    // on next launch — only an abrupt termination should leave a sentinel.
+    app.once('will-quit', () => clearSentinel());
+
     return [...blocklist];
 }
 
