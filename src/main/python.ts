@@ -17,6 +17,11 @@ let serverReady = false;
 // missing). waitForPython checks this so a config error fails fast with a
 // specific message instead of running out the full readiness timeout.
 let startupError: string | null = null;
+// True once waitForPython has confirmed the server with a successful HTTP
+// probe. Until then, any child exit is a startup failure — serverReady
+// alone is not enough, since the child can log "startup complete" and then
+// exit before the probe succeeds.
+let startupComplete = false;
 
 export function getPythonPort(): number {
     return serverPort;
@@ -211,6 +216,7 @@ function getDLCDir(): string {
 
 export async function startPython(): Promise<void> {
     startupError = null;
+    startupComplete = false;
     const slopsmithDir = findSlopsmithDir();
     const serverScript = path.join(slopsmithDir, 'server.py');
 
@@ -410,11 +416,13 @@ export async function startPython(): Promise<void> {
         // so the cause (SIGKILL/OOM, SIGTERM, ...) is not lost.
         const exitDesc = code !== null ? `code ${code}` : `signal ${signal ?? 'unknown'}`;
         console.log(`[python] Process exited with ${exitDesc}`);
-        // If the child exits before it ever signalled readiness, record a
-        // startupError so waitForPython fails fast instead of polling out
-        // the full timeout. serverReady === true means startup already
+        // If the child exits before waitForPython confirmed the server
+        // (HTTP probe), record a startupError so waitForPython fails fast
+        // instead of polling out the full timeout. serverReady alone is not
+        // enough — the child can log "startup complete" then exit before
+        // the probe succeeds. startupComplete === true means startup already
         // succeeded (a later crash is not a startup failure).
-        if (!serverReady && !startupError) {
+        if (!startupComplete && !startupError) {
             startupError = `Python process exited before startup completed (${exitDesc}).`;
         }
         pythonProcess = null;
@@ -470,7 +478,10 @@ export async function waitForPython(): Promise<number> {
                 req.on('error', () => resolve(false));
                 req.setTimeout(2000, () => { req.destroy(); resolve(false); });
             });
-            if (ok) return serverPort;
+            if (ok) {
+                startupComplete = true;
+                return serverPort;
+            }
             // serverReady was set but HTTP probe failed — fall through
             // and retry (lifespan-complete may briefly precede socket
             // accept on slow machines).
@@ -502,22 +513,29 @@ export async function getStartupStatus(): Promise<StartupStatus | null> {
 }
 
 export function stopPython(): void {
-    if (!pythonProcess) return;
+    // Capture the child being stopped. During restartPython the global
+    // pythonProcess may already point at a new child by the time the
+    // force-kill timer fires — SIGTERM/SIGKILL must hit the one being
+    // stopped, never the replacement.
+    const proc = pythonProcess;
+    if (!proc) return;
 
     console.log('[python] Stopping server...');
 
     // Try graceful shutdown first
-    pythonProcess.kill('SIGTERM');
+    let exited = false;
+    proc.kill('SIGTERM');
 
     // Force kill after timeout
     const killTimeout = setTimeout(() => {
-        if (pythonProcess) {
+        if (!exited) {
             console.log('[python] Force killing...');
-            pythonProcess.kill('SIGKILL');
+            proc.kill('SIGKILL');
         }
     }, 5000);
 
-    pythonProcess.on('close', () => {
+    proc.once('close', () => {
+        exited = true;
         clearTimeout(killTimeout);
     });
 }
