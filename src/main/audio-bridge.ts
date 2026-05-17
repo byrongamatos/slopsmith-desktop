@@ -333,10 +333,20 @@ export function initAudioBridge(): void {
             if (slot && typeof slot.path === 'string') pluginPath = slot.path;
         }
         if (pluginPath) armEditorSentinel(pluginPath);
-        const opened = audio?.openPluginEditor(slotId) ?? false;
+        let opened = false;
+        try {
+            opened = audio?.openPluginEditor(slotId) ?? false;
+        } catch (e) {
+            // A thrown call is a clean failure, not a hard crash — disarm so
+            // the plugin isn't falsely blocklisted on next startup.
+            disarmSentinel();
+            throw e;
+        }
         // A synchronous false means no editor window was created (the plugin
         // has none, or the open failed cleanly) — nothing can fault, so clear
-        // the sentinel now instead of waiting out the grace window.
+        // the sentinel now instead of waiting out the grace window. On a
+        // true return the sentinel stays armed: the editor is created
+        // asynchronously and could still fault within the grace window.
         if (!opened) disarmSentinel();
         return opened;
     });
